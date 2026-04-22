@@ -5,15 +5,16 @@ import (
 	"context"
 )
 
+type TransformerFunc func(ctx context.Context, in *bytes.Buffer) (*bytes.Buffer, error)
+
 type Transformer struct {
+	translate TransformerFunc
 }
 
-func NewTransformer() *Transformer {
-	return &Transformer{}
-}
-
-func (p *Transformer) Name() string {
-	return "transformer"
+func NewTransformer(translate TransformerFunc) *Transformer {
+	return &Transformer{
+		translate: translate,
+	}
 }
 
 func (p *Transformer) Process(ctx context.Context, in *bytes.Buffer, params *PipelineParameters) (*bytes.Buffer, error) {
@@ -21,5 +22,9 @@ func (p *Transformer) Process(ctx context.Context, in *bytes.Buffer, params *Pip
 		return nil, err
 	}
 
-	return cloneBuffer(in), nil
+	return p.translate(ctx, in)
+}
+
+func (p *Transformer) Name() string {
+	return "markdown transformer"
 }

@@ -3,19 +3,28 @@ package processor
 import (
 	"bytes"
 	"context"
-	"errors"
+	"docpipe/io"
 	"time"
 )
-
-var ErrProcessorNotFound = errors.New("processor: not found")
 
 type Processor interface {
 	Name() string
 	Process(ctx context.Context, in *bytes.Buffer, params *PipelineParameters) (*bytes.Buffer, error)
 }
 
+type MetaData = io.MetaData
+
+// Config holds the configuration for the processing pipeline.
+type Config struct {
+	TargetLanguage    string
+	IncludeImages     bool
+	IncludeSourceFile bool
+}
+
 type PipelineParameters struct {
-	Parameters map[string]string
+	DocumentFormat Format
+	io.MetaData
+	Config
 }
 
 type StepResult struct {

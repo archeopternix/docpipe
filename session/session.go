@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"docpipe/converter"
 	"docpipe/processor"
 )
 
@@ -21,7 +20,7 @@ const (
 
 type Result struct {
 	Output   *bytes.Buffer
-	Metadata *processor.Metadata
+	Params   processor.PipelineParameters
 	Err      error
 	Duration time.Duration
 	Steps    []processor.StepResult
@@ -32,19 +31,17 @@ type Session struct {
 	Status Status
 
 	input  *bytes.Buffer
-	format converter.Format
 	result *Result
 
 	done chan struct{}
 	mu   sync.Mutex
 }
 
-func New(format converter.Format, input *bytes.Buffer) *Session {
+func New(input *bytes.Buffer) *Session {
 	return &Session{
 		ID:     newSessionID(),
 		Status: StatusPending,
 		input:  cloneBuffer(input),
-		format: format,
 		done:   make(chan struct{}),
 	}
 }
@@ -52,7 +49,7 @@ func New(format converter.Format, input *bytes.Buffer) *Session {
 func (s *Session) Result() *Result {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.result
+	return cloneResult(s.result)
 }
 
 func (s *Session) Wait(ctx context.Context) (*Result, error) {
@@ -73,7 +70,7 @@ func (s *Session) MarkRunning() {
 func (s *Session) MarkDone(result *Result) {
 	s.mu.Lock()
 	s.Status = StatusDone
-	s.result = result
+	s.result = cloneResult(result)
 	s.mu.Unlock()
 	closeOnce(s.done)
 }
@@ -85,9 +82,32 @@ func (s *Session) MarkFailed(result *Result, err error) {
 		result = &Result{}
 	}
 	result.Err = err
-	s.result = result
+	s.result = cloneResult(result)
 	s.mu.Unlock()
 	closeOnce(s.done)
+}
+
+func cloneResult(src *Result) *Result {
+	if src == nil {
+		return nil
+	}
+
+	dst := *src
+	dst.Output = cloneBuffer(src.Output)
+	dst.Params = clonePipelineParameters(src.Params)
+	if src.Steps != nil {
+		dst.Steps = append([]processor.StepResult(nil), src.Steps...)
+	}
+
+	return &dst
+}
+
+func clonePipelineParameters(src processor.PipelineParameters) processor.PipelineParameters {
+	dst := src
+	if src.MetaData.Keywords != nil {
+		dst.MetaData.Keywords = append([]string(nil), src.MetaData.Keywords...)
+	}
+	return dst
 }
 
 func cloneBuffer(src *bytes.Buffer) *bytes.Buffer {

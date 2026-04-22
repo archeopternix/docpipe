@@ -1,52 +1,82 @@
 package docpipe
 
-import (
-	"runtime"
+import "docpipe/processor"
 
-	"docpipe/converter"
-	"docpipe/processor"
-)
+type Option func(*Pipeline)
 
-type Option func(*Engine)
-
-func WithMaxParallel(n int) Option {
-	return func(e *Engine) {
-		if n > 0 {
-			e.maxParallel = n
+func WithProcessor(node processor.Processor) Option {
+	return func(p *Pipeline) {
+		if p == nil || node == nil {
+			return
 		}
+		p.Nodes = append(p.Nodes, node)
 	}
 }
 
-func WithConverter(c converter.Converter) Option {
-	return func(e *Engine) {
-		if c != nil {
-			e.RegisterConverter(c)
+func WithProcessors(nodes ...processor.Processor) Option {
+	return func(p *Pipeline) {
+		if p == nil {
+			return
 		}
-	}
-}
-
-func WithProcessors(ps ...processor.Processor) Option {
-	return func(e *Engine) {
-		e.processorRegistry = make(map[string]processor.Processor)
-		e.processorOrder = e.processorOrder[:0]
-		for _, p := range ps {
-			if p != nil {
-				e.RegisterProcessor(p)
+		p.Nodes = p.Nodes[:0]
+		for _, node := range nodes {
+			if node != nil {
+				p.Nodes = append(p.Nodes, node)
 			}
 		}
 	}
 }
 
-func WithTranslationBackend(translate processor.TranslateFunc) Option {
-	return func(e *Engine) {
-		e.translation = translate
+func WithDocumentFormat(format processor.Format) Option {
+	return func(p *Pipeline) {
+		if p == nil {
+			return
+		}
+		p.params.DocumentFormat = format
 	}
 }
 
-func defaultMaxParallel() int {
-	n := runtime.NumCPU()
-	if n < 1 {
-		return 1
+func WithMetaData(meta processor.MetaData) Option {
+	return func(p *Pipeline) {
+		if p == nil {
+			return
+		}
+		p.params.MetaData = cloneMetaData(meta)
 	}
-	return n
+}
+
+func WithConfig(config processor.Config) Option {
+	return func(p *Pipeline) {
+		if p == nil {
+			return
+		}
+		p.params.Config = config
+	}
+}
+
+func WithTargetLanguage(lang string) Option {
+	return func(p *Pipeline) {
+		if p == nil {
+			return
+		}
+		p.params.TargetLanguage = lang
+	}
+}
+
+func WithIncludeImages(include bool) Option {
+	return func(p *Pipeline) {
+		if p == nil {
+			return
+		}
+		p.params.IncludeImages = include
+	}
+}
+
+func WithIncludeSourceFile(include bool) Option {
+	return func(p *Pipeline) {
+		if p == nil {
+			return
+		}
+		p.params.IncludeSourceFile = include
+	}
 }
