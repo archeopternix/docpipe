@@ -1,7 +1,7 @@
 //go:build windows
 // +build windows
 
-package io
+package filetime
 
 import (
 	"os"
@@ -10,7 +10,7 @@ import (
 	"unsafe"
 )
 
-func creationTime(path string, _ os.FileInfo) (time.Time, bool, error) {
+func creationTime(path string, fi os.FileInfo) (time.Time, bool, error) {
 	p, err := syscall.UTF16PtrFromString(path)
 	if err != nil {
 		return time.Time{}, false, err
@@ -21,7 +21,5 @@ func creationTime(path string, _ os.FileInfo) (time.Time, bool, error) {
 		return time.Time{}, false, err
 	}
 
-	// Filetime -> time.Time
-	t := time.Unix(0, data.CreationTime.Nanoseconds())
-	return t, true, nil
+	return time.Unix(0, data.CreationTime.Nanoseconds()), true, nil
 }

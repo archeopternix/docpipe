@@ -1,16 +1,10 @@
 package processor
 
-import (
-	"errors"
-
-	docio "docpipe/io"
-)
+import "errors"
 
 var (
 	ErrNilInput            = errors.New("docpipe: nil input buffer")
-	ErrMetaDataNil         = docio.ErrMetaDataNil
 	ErrParameterMissing    = errors.New("docpipe: missing parameter")
-	ErrUnsupportedFormat   = docio.ErrUnsupportedFormat
 	ErrDocxNilSource       = errors.New("docx file converter: nil source")
 	ErrPptxNilSource       = errors.New("pptx file converter: nil source")
 	ErrMarkdownNilSource   = errors.New("markdown file converter: nil source")

@@ -1,6 +1,9 @@
 package docpipe
 
-import "docpipe/processor"
+import (
+	docio "docpipe/io"
+	"docpipe/processor"
+)
 
 type Option func(*Pipeline)
 
@@ -36,7 +39,7 @@ func WithDocumentFormat(format processor.Format) Option {
 	}
 }
 
-func WithMetaData(meta processor.MetaData) Option {
+func WithMetaData(meta docio.MetaData) Option {
 	return func(p *Pipeline) {
 		if p == nil {
 			return

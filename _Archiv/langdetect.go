@@ -3,6 +3,7 @@ package processor
 import (
 	"bytes"
 	"context"
+	"docpipe/io"
 )
 
 type DetectFunc func(ctx context.Context, in *bytes.Buffer) (string, error)
@@ -15,12 +16,12 @@ func NewLangDetector(detect DetectFunc) *LangDetector {
 	return &LangDetector{detect: detect}
 }
 
-func (p *LangDetector) Process(ctx context.Context, in *bytes.Buffer, params *PipelineParameters) (*bytes.Buffer, error) {
+func (p *LangDetector) Process(ctx context.Context, docs *io.Documents, params *PipelineParameters) error {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return err
 	}
 
-	sourcelang := params.MetaData.Language
+	sourcelang := docs.MetaData.Language
 
 	if sourcelang != "" {
 		params.MetaData.Language = sourcelang

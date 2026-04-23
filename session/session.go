@@ -103,11 +103,7 @@ func cloneResult(src *Result) *Result {
 }
 
 func clonePipelineParameters(src processor.PipelineParameters) processor.PipelineParameters {
-	dst := src
-	if src.MetaData.Keywords != nil {
-		dst.MetaData.Keywords = append([]string(nil), src.MetaData.Keywords...)
-	}
-	return dst
+	return src
 }
 
 func cloneBuffer(src *bytes.Buffer) *bytes.Buffer {

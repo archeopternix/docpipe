@@ -13,7 +13,7 @@ import (
 	"sync"
 )
 
-type FileConverter func(path string, meta *MetaData) (*bytes.Buffer, error)
+type fileConverter func(path string, docs *Documents) error
 
 var (
 	ErrMetaDataNil       = errors.New("docpipe: nil metadata")
@@ -21,126 +21,95 @@ var (
 
 	officeMu = &sync.Mutex{}
 
-	fileConverters = map[string]FileConverter{
-		".docx":     WordFileConverter,
-		".pptx":     PptxFileConverter,
-		".md":       MarkdownFileConverter,
-		".markdown": MarkdownFileConverter,
-		".txt":      TextFileConverter,
+	fileConverters = map[string]fileConverter{
+		".docx":     ConvertDocxToMarkdown,
+		".pptx":     pptxFileConverter,
+		".md":       textFileConverter,
+		".markdown": textFileConverter,
+		".txt":      textFileConverter,
 	}
 )
 
-func ConvertFile(path string, meta *MetaData) (*bytes.Buffer, error) {
-	if meta == nil {
-		return nil, ErrMetaDataNil
-	}
+// Process is the way how we chain the workload
+// Process(ctx context.Context, in *Sources, params *PipelineParameters) (*Sources, error)
+func ConvertFile(path string) (*Documents, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
 
-	ext := NormalizeExtension(filepath.Ext(path))
+	ext := normalizeExtension(filepath.Ext(path))
 	converter, ok := fileConverters[ext]
 	if !ok {
 		return nil, ErrUnsupportedFormat
 	}
 
 	// Read metadata first to populate common fields, then call the converter to extract text.
-	var err error
-	*meta, err = ReadMetaData(path)
+	docs := NewDocuments()
+	docs.MetaData = *defaultMetaData(path)
+
+	// attach the original file
+	orig, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	docs.OriginalFile = bytes.NewBuffer(orig)
 
-	return converter(path, meta)
+	if err := PopulateMetaData(path, &docs.MetaData); err != nil {
+		return nil, err
+	}
+
+	err = converter(path, docs)
+	return docs, err
 }
 
-func WordFileConverter(path string, meta *MetaData) (*bytes.Buffer, error) {
-	if meta == nil {
-		return nil, ErrMetaDataNil
+/*
+func SaveZip(path string, buf *bytes.Buffer) error {
+	if buf == nil {
+		return os.ErrInvalid
 	}
+	return os.WriteFile(path, append([]byte(nil), buf.Bytes()...), 0o644)
+}
+*/
+
+func pptxFileConverter(path string, docs *Documents) error {
 
 	officeMu.Lock()
 	defer officeMu.Unlock()
 
 	reader, err := zip.OpenReader(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer reader.Close()
 
 	props, err := readOfficeCorePropertiesFromFiles(reader.File)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	applyOfficeCoreProperties(meta, props)
-
-	text, err := extractWordText(reader.File)
-	if err != nil {
-		return nil, err
-	}
-	return bytes.NewBufferString(text), nil
-}
-
-func PptxFileConverter(path string, meta *MetaData) (*bytes.Buffer, error) {
-	if meta == nil {
-		return nil, ErrMetaDataNil
-	}
-
-	officeMu.Lock()
-	defer officeMu.Unlock()
-
-	reader, err := zip.OpenReader(path)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-
-	props, err := readOfficeCorePropertiesFromFiles(reader.File)
-	if err != nil {
-		return nil, err
-	}
-	applyOfficeCoreProperties(meta, props)
+	applyOfficeCoreProperties(&docs.MetaData, props)
 
 	text, err := extractPptxText(reader.File)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return bytes.NewBufferString(text), nil
+	docs.MarkdownFile = bytes.NewBufferString(text)
+
+	return nil
 }
 
-func MarkdownFileConverter(path string, meta *MetaData) (*bytes.Buffer, error) {
-	if meta == nil {
-		return nil, ErrMetaDataNil
+func textFileConverter(path string, docs *Documents) error {
+	if docs.MetaData.Version == "" {
+		docs.MetaData.Version = "1.0"
 	}
+
+	frontmatter := ApplyMetaDataFrontmatter("", &docs.MetaData)
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return bytes.NewBuffer(append([]byte(nil), body...)), nil
-}
+	docs.MarkdownFile = bytes.NewBuffer(append([]byte(frontmatter), body...))
 
-func TextFileConverter(path string, meta *MetaData) (*bytes.Buffer, error) {
-	if meta == nil {
-		return nil, ErrMetaDataNil
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	return bytes.NewBuffer(append([]byte(nil), body...)), nil
-}
-
-func extractWordText(files []*zip.File) (string, error) {
-	file := findZipFile(files, "word/document.xml")
-	if file == nil {
-		return "", nil
-	}
-	return extractXMLText(file, xmlTextOptions{
-		textNames:      map[string]bool{"t": true},
-		tabNames:       map[string]bool{"tab": true},
-		breakNames:     map[string]bool{"br": true, "cr": true},
-		paragraphNames: map[string]bool{"p": true},
-	})
+	return nil
 }
 
 func extractPptxText(files []*zip.File) (string, error) {
@@ -241,6 +210,7 @@ func extractXMLText(file *zip.File, options xmlTextOptions) (string, error) {
 	return strings.TrimSpace(builder.String()), nil
 }
 
+/*
 func findZipFile(files []*zip.File, name string) *zip.File {
 	for _, file := range files {
 		if file.Name == name {
@@ -249,3 +219,49 @@ func findZipFile(files []*zip.File, name string) *zip.File {
 	}
 	return nil
 }
+
+
+func zipPayload(name string, body []byte) (*bytes.Buffer, error) {
+	buf := bytes.NewBuffer(nil)
+	writer := zip.NewWriter(buf)
+
+	entry, err := writer.Create(name)
+	if err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	if _, err := entry.Write(body); err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+func zipEntryName(path string) string {
+	ext := normalizeExtension(filepath.Ext(path))
+	switch ext {
+	case ".md", ".markdown":
+		return "document.md"
+	default:
+		return "document.txt"
+	}
+}
+*/
+
+/*
+func extractWordText(files []*zip.File) (string, error) {
+	file := findZipFile(files, "word/document.xml")
+	if file == nil {
+		return "", nil
+	}
+	return extractXMLText(file, xmlTextOptions{
+		textNames:      map[string]bool{"t": true},
+		tabNames:       map[string]bool{"tab": true},
+		breakNames:     map[string]bool{"br": true, "cr": true},
+		paragraphNames: map[string]bool{"p": true},
+	})
+}
+*/

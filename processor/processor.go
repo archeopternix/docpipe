@@ -9,10 +9,8 @@ import (
 
 type Processor interface {
 	Name() string
-	Process(ctx context.Context, in *bytes.Buffer, params *PipelineParameters) (*bytes.Buffer, error)
+	Process(ctx context.Context, documents *io.Documents, params *PipelineParameters) (StepResult, error)
 }
-
-type MetaData = io.MetaData
 
 // Config holds the configuration for the processing pipeline.
 type Config struct {
@@ -23,14 +21,13 @@ type Config struct {
 
 type PipelineParameters struct {
 	DocumentFormat Format
-	io.MetaData
 	Config
 }
 
 type StepResult struct {
-	Name     string
-	Duration time.Duration
-	Err      error
+	Name      string
+	Duration  time.Duration
+	ErrorText string
 }
 
 func cloneBuffer(src *bytes.Buffer) *bytes.Buffer {

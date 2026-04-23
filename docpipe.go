@@ -3,6 +3,7 @@ package docpipe
 import (
 	"bytes"
 	"context"
+	docio "docpipe/io"
 	"fmt"
 	"time"
 
@@ -39,7 +40,7 @@ func (p *Pipeline) SetDocumentFormat(format processor.Format) {
 	p.params.DocumentFormat = format
 }
 
-func (p *Pipeline) SetMetaData(meta processor.MetaData) {
+func (p *Pipeline) SetMetaData(meta docio.MetaData) {
 	p.params.MetaData = cloneMetaData(meta)
 }
 
@@ -123,7 +124,7 @@ func clonePipelineParameters(src processor.PipelineParameters) processor.Pipelin
 	return dst
 }
 
-func cloneMetaData(src processor.MetaData) processor.MetaData {
+func cloneMetaData(src docio.MetaData) docio.MetaData {
 	dst := src
 	if src.Keywords != nil {
 		dst.Keywords = append([]string(nil), src.Keywords...)

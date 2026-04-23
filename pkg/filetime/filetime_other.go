@@ -1,7 +1,7 @@
-//go:build linux
-// +build linux
+//go:build !windows && !linux && !darwin
+// +build !windows,!linux,!darwin
 
-package util
+package filetime
 
 import (
 	"os"
@@ -9,6 +9,5 @@ import (
 )
 
 func creationTime(path string, fi os.FileInfo) (time.Time, bool, error) {
-	// Linux: creation time (btime) isn't reliably exposed via Go's stat.
 	return time.Time{}, false, nil
 }

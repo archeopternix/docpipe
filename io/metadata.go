@@ -1,15 +1,14 @@
 package io
 
 import (
-	"archive/zip"
-	"encoding/xml"
 	"fmt"
-	stdio "io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"docpipe/pkg/filetime"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +16,7 @@ import (
 var (
 	markdownFilenamePattern = regexp.MustCompile(`(?i)^(.*)_([a-z]{2})_v(\d+(?:\.\d+)*)$`)
 	versionPattern          = regexp.MustCompile(`^\d+(?:\.\d+)*$`)
+	datetimelayout          = "2006-01-02 15:04:05"
 )
 
 // MetaData holds the metadata information of a document.
@@ -34,49 +34,23 @@ type MetaData struct {
 	Keywords         []string
 }
 
-type MarkdownFileNameParts struct {
+type markdownFileNameParts struct {
 	BaseStem string
 	Language string
 	Version  string
 	Matched  bool
 }
 
-type officeCoreProperties struct {
-	XMLName     xml.Name `xml:"coreProperties"`
-	Title       string   `xml:"title"`
-	Subject     string   `xml:"subject"`
-	Creator     string   `xml:"creator"`
-	Keywords    string   `xml:"keywords"`
-	Description string   `xml:"description"`
-	Language    string   `xml:"language"`
-	Revision    string   `xml:"revision"`
-}
-
-func ReadMetaData(path string) (MetaData, error) {
-	meta := defaultMetaData(path)
-
-	switch NormalizeExtension(filepath.Ext(path)) {
-	case ".docx", ".pptx":
-		return readOfficeMetaData(path)
-	case ".md", ".markdown":
-		return readMarkdownMetaData(path)
-	case ".txt":
-		return meta, nil
-	default:
-		return meta, fmt.Errorf("metadata extraction not supported for %q", filepath.Ext(path))
-	}
-}
-
-func ApplyMetaDataFrontmatter(body string, meta MetaData) string {
+func ApplyMetaDataFrontmatter(body string, meta *MetaData) string {
 	body = strings.TrimLeft(stripLeadingFrontmatter(normalizeFrontmatterNewlines(body)), "\n")
 
 	var builder strings.Builder
 	builder.WriteString("---\n")
 	writeFrontmatterString(&builder, "title", meta.Title)
 	writeFrontmatterString(&builder, "subtitle", meta.Subtitle)
-	writeFrontmatterString(&builder, "date", formatDate(meta.Date))
-	writeFrontmatterString(&builder, "changed_date", formatDate(meta.ChangedDate))
-	writeFrontmatterString(&builder, "original_document", meta.OriginalDocument)
+	writeFrontmatterString(&builder, "date", formatFrontmatterDate(meta.Date))
+	writeFrontmatterString(&builder, "changed_date", formatFrontmatterDate(meta.ChangedDate))
+	writeFrontmatterString(&builder, "original_document", normalizeOriginalDocumentPath(meta.OriginalDocument))
 	writeFrontmatterString(&builder, "original_format", meta.OriginalFormat)
 	writeFrontmatterString(&builder, "version", meta.Version)
 	writeFrontmatterString(&builder, "language", meta.Language)
@@ -89,46 +63,94 @@ func ApplyMetaDataFrontmatter(body string, meta MetaData) string {
 	return builder.String()
 }
 
-func formatDate(input string) string {
-	layouts := []string{
-		time.RFC3339,          // 2006-01-02T15:04:05Z07:00
-		time.RFC3339Nano,      // 2006-01-02T15:04:05.999999999Z07:00
-		time.RFC1123,          // Mon, 02 Jan 2006 15:04:05 MST
-		time.RFC1123Z,         // Mon, 02 Jan 2006 15:04:05 -0700
-		time.RFC850,           // Monday, 02-Jan-06 15:04:05 MST
-		time.RFC822,           // 02 Jan 06 15:04 MST
-		time.RFC822Z,          // 02 Jan 06 15:04 -0700
-		"2006-01-02 15:04:05", // datetime with seconds
-		"2006-01-02 15:04",    // datetime without seconds
-		"2006-01-02",          // date only
-		"02.01.2006 15:04:05", // EU datetime with seconds
-		"02.01.2006 15:04",    // EU datetime
-		"02.01.2006",          // EU date
-		"01/02/2006 15:04:05", // US datetime with seconds
-		"01/02/2006 15:04",    // US datetime
-		"01/02/2006",          // US date
-		"Jan 2, 2006 3:04 PM", // verbose with AM/PM
-		"Jan 2, 2006",         // verbose date
-		"January 2, 2006",     // full month name
-		"2 Jan 2006 15:04:05", // day-first verbose
-		"2 Jan 2006",          // day-first verbose date
-		time.UnixDate,         // Mon Jan _2 15:04:05 MST 2006
-		time.ANSIC,            // Mon Jan _2 15:04:05 2006
+func PopulateMetaData(path string, meta *MetaData) error {
+	switch normalizeExtension(filepath.Ext(path)) {
+	case ".docx", ".pptx":
+		if err := readOfficeMetaData(path, meta); err != nil {
+			return err
+		}
+		return nil
+	case ".md", ".markdown":
+		if err := readMarkdownMetaData(path, meta); err != nil {
+			return err
+		}
+		return nil
+	case ".txt":
+		return nil
+	default:
+		return fmt.Errorf("metadata extraction not supported for %q", filepath.Ext(path))
+	}
+}
+
+// ParseFileNameFromMetaData generates a Markdown file name based on the metadata information.
+func (m MetaData) ParseFileNameFromMetaData() string {
+
+	baseStem := strings.TrimSpace(strings.TrimSpace(m.Title))
+	if baseStem == "" {
+		baseStem = "Document"
 	}
 
-	input = strings.TrimSpace(input)
+	language := normalizeVersionLanguage(m.Language)
+	if language == "" {
+		language = "EN"
+	}
 
-	for _, layout := range layouts {
-		t, err := time.Parse(layout, input)
-		if err == nil {
-			return t.Format("02.01.2006 15:04")
+	version := normalizeMarkdownVersion(m.Version)
+	if version == "" {
+		version = "1.0"
+	}
+
+	return fmt.Sprintf("%s_%s_v%s.md", baseStem, language, version)
+}
+
+//----------------------------------------------------------------------------
+
+func stripLeadingFrontmatter(body string) string {
+	if !strings.HasPrefix(body, "---\n") {
+		return body
+	}
+	end := strings.Index(body[4:], "\n---\n")
+	if end < 0 {
+		return body
+	}
+	return body[end+9:]
+}
+
+func writeFrontmatterString(builder *strings.Builder, key, value string) {
+	builder.WriteString(fmt.Sprintf("%s: %q\n", key, value))
+}
+
+func writeFrontmatterKeywords(builder *strings.Builder, keywords []string) {
+	builder.WriteString("keywords:\n")
+	for _, keyword := range normalizeKeywords(keywords) {
+		builder.WriteString(fmt.Sprintf("  - %q\n", keyword))
+	}
+}
+
+func formatFrontmatterDate(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	for _, layout := range []string{time.RFC3339, "2006-01-02", datetimelayout} {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t.Format(datetimelayout)
 		}
 	}
 
-	return ""
+	return value
 }
 
-func NormalizeLanguageCode(value string) string {
+func normalizeOriginalDocumentPath(path string) string {
+	name := strings.TrimSpace(filepath.Base(path))
+	if name == "" || name == "." {
+		return "document/"
+	}
+	return filepath.ToSlash(filepath.Join("document", name))
+}
+
+func normalizeLanguageCode(value string) string {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	if normalized == "" {
 		return ""
@@ -156,14 +178,7 @@ func NormalizeLanguageCode(value string) string {
 	return normalized
 }
 
-func FilenameLanguageCode(value string) string {
-	if normalized := NormalizeLanguageCode(value); normalized != "" {
-		return strings.ToUpper(normalized)
-	}
-	return ""
-}
-
-func NormalizeVersion(value string) string {
+func normalizeVersion(value string) string {
 	normalized := strings.TrimSpace(value)
 	normalized = strings.TrimPrefix(strings.TrimPrefix(normalized, "v"), "V")
 	if !versionPattern.MatchString(normalized) {
@@ -172,90 +187,62 @@ func NormalizeVersion(value string) string {
 	return normalized
 }
 
-func NewFileNameVersion(entryName, body string, meta *MetaData, detectLanguage func(string) (string, error)) (string, error) {
-	parts := ParseMarkdownFileName(entryName)
-	baseStem := strings.TrimSpace(parts.BaseStem)
-	if baseStem == "" {
-		baseStem = MarkdownBaseStem(entryName)
-	}
-	if baseStem == "" {
-		baseStem = "document"
+func parseMarkdownFileName(name string) markdownFileNameParts {
+	stem := strings.TrimSpace(strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)))
+	if stem == "" {
+		return markdownFileNameParts{}
 	}
 
-	version := NormalizeVersion(parts.Version)
-	if version == "" && meta != nil {
-		version = NormalizeVersion(meta.Version)
-	}
-	if version == "" {
-		version = "1.0"
+	matches := markdownFilenamePattern.FindStringSubmatch(stem)
+	if len(matches) != 4 {
+		return markdownFileNameParts{BaseStem: stem}
 	}
 
-	language := NormalizeLanguageCode(parts.Language)
-	if language == "" && meta != nil {
-		language = NormalizeLanguageCode(meta.Language)
+	return markdownFileNameParts{
+		BaseStem: strings.TrimSpace(matches[1]),
+		Language: normalizeLanguageCode(matches[2]),
+		Version:  normalizeVersion(matches[3]),
+		Matched:  true,
 	}
-	if language == "" {
-		if detectLanguage == nil {
-			return "", fmt.Errorf("language detection unavailable for %s", entryName)
-		}
-		detected, err := detectLanguage(body)
-		if err != nil {
-			return "", err
-		}
-		language = NormalizeLanguageCode(detected)
-		if language == "" {
-			return "", fmt.Errorf("language detection returned no usable language for %s", entryName)
-		}
-	}
-
-	if meta != nil {
-		meta.Version = version
-		meta.Language = language
-		if strings.TrimSpace(meta.Title) == "" {
-			meta.Title = baseStem
-		}
-	}
-
-	return fmt.Sprintf("%s_%s_v%s.md", baseStem, FilenameLanguageCode(language), version), nil
 }
 
-func readOfficeMetaData(path string) (MetaData, error) {
-	meta := defaultMetaData(path)
-
-	reader, err := zip.OpenReader(path)
-	if err != nil {
-		return meta, err
+func markdownBaseStem(name string) string {
+	parts := parseMarkdownFileName(name)
+	if strings.TrimSpace(parts.BaseStem) != "" {
+		return parts.BaseStem
 	}
-	defer reader.Close()
-
-	props, err := readOfficeCorePropertiesFromFiles(reader.File)
-	if err != nil {
-		return meta, err
-	}
-	applyOfficeCoreProperties(&meta, props)
-	return meta, nil
+	return strings.TrimSpace(strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)))
 }
 
-func readMarkdownMetaData(path string) (MetaData, error) {
-	meta := defaultMetaData(path)
+func normalizeExtension(ext string) string {
+	if ext == "" {
+		return ""
+	}
+	normalized := strings.ToLower(strings.TrimSpace(ext))
+	if !strings.HasPrefix(normalized, ".") {
+		normalized = "." + normalized
+	}
+	return normalized
+}
 
+func readMarkdownMetaData(path string, meta *MetaData) error {
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return meta, err
+		return err
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return meta, err
+		return err
 	}
 
-	if parsed, ok, err := parseMarkdownMetaData(string(body), meta); err != nil {
-		return meta, err
+	if parsed, ok, err := parseMarkdownMetaData(string(body), *meta); err != nil {
+		return err
 	} else if ok {
-		meta = parsed
+		*meta = parsed
 	}
 
 	if meta.Title == "" {
-		meta.Title = MarkdownBaseStem(path)
+		meta.Title = markdownBaseStem(path)
 	}
 	if meta.Date == "" {
 		meta.Date = info.ModTime().Format("2006-01-02")
@@ -264,7 +251,7 @@ func readMarkdownMetaData(path string) (MetaData, error) {
 		meta.ChangedDate = info.ModTime().Format("2006-01-02")
 	}
 
-	return meta, nil
+	return nil
 }
 
 func parseMarkdownMetaData(body string, defaults MetaData) (MetaData, bool, error) {
@@ -279,6 +266,7 @@ func parseMarkdownMetaData(body string, defaults MetaData) (MetaData, bool, erro
 	}
 
 	meta := defaults
+
 	meta.Author = readStringField(raw, "author")
 	meta.Title = readStringField(raw, "title")
 	meta.Subtitle = readStringField(raw, "subtitle")
@@ -286,8 +274,8 @@ func parseMarkdownMetaData(body string, defaults MetaData) (MetaData, bool, erro
 	meta.ChangedDate = firstNonEmpty(readStringField(raw, "changed_date"), defaults.ChangedDate)
 	meta.OriginalDocument = firstNonEmpty(readStringField(raw, "original_document"), defaults.OriginalDocument)
 	meta.OriginalFormat = firstNonEmpty(readStringField(raw, "original_format"), defaults.OriginalFormat)
-	meta.Version = firstNonEmpty(defaults.Version, NormalizeVersion(readStringField(raw, "version")))
-	meta.Language = firstNonEmpty(defaults.Language, NormalizeLanguageCode(readStringField(raw, "language")), NormalizeLanguageCode(readStringField(raw, "lang")))
+	meta.Version = firstNonEmpty(defaults.Version, normalizeVersion(readStringField(raw, "version")))
+	meta.Language = firstNonEmpty(defaults.Language, normalizeLanguageCode(readStringField(raw, "language")), normalizeLanguageCode(readStringField(raw, "lang")))
 	meta.Abstract = readStringField(raw, "abstract")
 	meta.Keywords = readKeywordsField(raw["keywords"])
 
@@ -295,29 +283,31 @@ func parseMarkdownMetaData(body string, defaults MetaData) (MetaData, bool, erro
 }
 
 func getFileCreatedDate(path string) string {
-	date, _ := FileTimeFormatted(path, "created", time.RFC3339)
+	date, _ := filetime.Formatted(path, "created", time.RFC3339)
 	return date
 }
 
 func getFileModifiedDate(path string) string {
-	date, _ := FileTimeFormatted(path, "modified", time.RFC3339)
+	date, _ := filetime.Formatted(path, "modified", time.RFC3339)
 	return date
 }
 
-func defaultMetaData(path string) MetaData {
+func defaultMetaData(path string) *MetaData {
 	meta := MetaData{
-		Title:            MarkdownBaseStem(path),
-		OriginalDocument: filepath.Base(path),
+		Title:            markdownBaseStem(path),
+		OriginalDocument: normalizeOriginalDocumentPath(path),
 		OriginalFormat:   strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
 		Date:             getFileCreatedDate(path),
 		ChangedDate:      getFileModifiedDate(path),
+		Version:          parseVersionFromFile(path),
+		Language:         parseLanguageFromFile(path),
 	}
 	if meta.OriginalFormat == "md" || meta.OriginalFormat == "markdown" {
-		parts := ParseMarkdownFileName(path)
+		parts := parseMarkdownFileName(path)
 		meta.Version = parts.Version
 		meta.Language = parts.Language
 	}
-	return meta
+	return &meta
 }
 
 func extractLeadingFrontmatter(body string) (string, bool) {
@@ -331,74 +321,9 @@ func extractLeadingFrontmatter(body string) (string, bool) {
 	return body[4 : end+4], true
 }
 
-func stripLeadingFrontmatter(body string) string {
-	if !strings.HasPrefix(body, "---\n") {
-		return body
-	}
-	end := strings.Index(body[4:], "\n---\n")
-	if end < 0 {
-		return body
-	}
-	return body[end+9:]
-}
-
 func normalizeFrontmatterNewlines(input string) string {
 	input = strings.ReplaceAll(input, "\r\n", "\n")
 	return strings.ReplaceAll(input, "\r", "\n")
-}
-
-func readOfficeCorePropertiesFromFiles(files []*zip.File) (officeCoreProperties, error) {
-	for _, file := range files {
-		if file.Name != "docProps/core.xml" {
-			continue
-		}
-		return readOfficeCoreProperties(file)
-	}
-	return officeCoreProperties{}, nil
-}
-
-func readOfficeCoreProperties(file *zip.File) (officeCoreProperties, error) {
-	var props officeCoreProperties
-	rc, err := file.Open()
-	if err != nil {
-		return props, err
-	}
-	defer rc.Close()
-
-	decoder := xml.NewDecoder(rc)
-	if err := decoder.Decode(&props); err != nil && err != stdio.EOF {
-		return props, err
-	}
-	return props, nil
-}
-
-func applyOfficeCoreProperties(meta *MetaData, props officeCoreProperties) {
-	if meta == nil {
-		return
-	}
-	meta.Author = strings.TrimSpace(props.Creator)
-	meta.Title = strings.TrimSpace(props.Title)
-	meta.Language = NormalizeLanguageCode(props.Language)
-	meta.Version = NormalizeVersion(props.Revision)
-
-	description := strings.TrimSpace(props.Description)
-	if description != "" {
-		meta.Abstract = description
-	} else {
-		meta.Abstract = strings.TrimSpace(props.Subject)
-	}
-	meta.Keywords = normalizeKeywords(props.Keywords)
-}
-
-func writeFrontmatterString(builder *strings.Builder, key, value string) {
-	builder.WriteString(fmt.Sprintf("%s: %q\n", key, value))
-}
-
-func writeFrontmatterKeywords(builder *strings.Builder, keywords []string) {
-	builder.WriteString("keywords:\n")
-	for _, keyword := range normalizeKeywords(keywords) {
-		builder.WriteString(fmt.Sprintf("  - %q\n", keyword))
-	}
 }
 
 func readStringField(values map[string]any, key string) string {
