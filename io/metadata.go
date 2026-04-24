@@ -59,46 +59,6 @@ type officeCoreProperties struct {
 	Revision    string   `xml:"revision"`
 }
 
-func PopulateMetaData(path string, meta *MetaData) error {
-	switch normalizeExtension(filepath.Ext(path)) {
-	case ".docx", ".pptx":
-		if err := readOfficeMetaData(path, meta); err != nil {
-			return err
-		}
-		return nil
-	case ".md", ".markdown":
-		if err := readMarkdownMetaData(path, meta); err != nil {
-			return err
-		}
-		return nil
-	case ".txt":
-		return nil
-	default:
-		return fmt.Errorf("metadata extraction not supported for %q", filepath.Ext(path))
-	}
-}
-
-// ParseFileNameFromMetaData generates a Markdown file name based on the metadata information.
-func (m MetaData) ParseFileNameFromMetaData() string {
-
-	baseStem := strings.TrimSpace(strings.TrimSpace(m.Title))
-	if baseStem == "" {
-		baseStem = "Document"
-	}
-
-	language := normalizeVersionLanguage(m.Language)
-	if language == "" {
-		language = "EN"
-	}
-
-	version := normalizeMarkdownVersion(m.Version)
-	if version == "" {
-		version = "1.0"
-	}
-
-	return fmt.Sprintf("%s_%s_v%s.md", baseStem, language, version)
-}
-
 //----------------------------------------------------------------------------
 
 func stripLeadingFrontmatter(body string) string {

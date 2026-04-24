@@ -36,7 +36,7 @@ func (d *Documents) SaveAsZip(path string) error {
 		return err
 	}
 
-	zipfile := filepath.Join(path, zipFileName(d.MetaData.ParseFileNameFromMetaData()))
+	zipfile := filepath.Join(path, zipFileName(d.GetMarkdownFileName()))
 
 	// Create the zip file
 	out, err := os.Create(zipfile)
@@ -70,7 +70,7 @@ func (d *Documents) CreateZipBytes(writer *zip.Writer) error {
 
 	// Save Markdown file at the root of the ZIP with a name derived from the original document
 	if d.MarkdownFile != nil && d.MarkdownFile.Len() > 0 {
-		if err := writeZipEntry(writer, d.MetaData.ParseFileNameFromMetaData(), d.MarkdownFile); err != nil {
+		if err := writeZipEntry(writer, d.GetMarkdownFileName(), d.MarkdownFile); err != nil {
 			_ = writer.Close()
 			return nil
 		}
@@ -111,7 +111,7 @@ func (d *Documents) CreateZipBytes(writer *zip.Writer) error {
 	return nil
 }
 
-func (d *Documents) ApplyMetaDataFrontmatter() {
+func (d *Documents) applyMetaDataFrontmatter() {
 	if d == nil {
 		return
 	}
@@ -141,6 +141,47 @@ func (d *Documents) ApplyMetaDataFrontmatter() {
 	builder.WriteString("\n")
 
 	d.MarkdownFile = bytes.NewBufferString(builder.String())
+}
+
+// GetMarkdownFileName generates a Markdown file name based on the metadata information.
+func (d Documents) GetMarkdownFileName() string {
+	baseStem := strings.TrimSpace(strings.TrimSpace(d.MetaData.Title))
+	if baseStem == "" {
+		baseStem = "Document"
+	}
+
+	language := normalizeVersionLanguage(d.MetaData.Language)
+	if language == "" {
+		language = "EN"
+	}
+
+	version := normalizeMarkdownVersion(d.MetaData.Version)
+	if version == "" {
+		version = "1.0"
+	}
+
+	return fmt.Sprintf("%s_%s_v%s.md", baseStem, language, version)
+}
+
+// ---------------------------------------------------------------------------
+
+func (d *Documents) populateMetaData(path string) error {
+	switch normalizeExtension(filepath.Ext(path)) {
+	case ".docx", ".pptx":
+		if err := readOfficeMetaData(path, &d.MetaData); err != nil {
+			return err
+		}
+		return nil
+	case ".md", ".markdown":
+		if err := readMarkdownMetaData(path, &d.MetaData); err != nil {
+			return err
+		}
+		return nil
+	case ".txt":
+		return nil
+	default:
+		return fmt.Errorf("metadata extraction not supported for %q", filepath.Ext(path))
+	}
 }
 
 func writeZipEntry(writer *zip.Writer, name string, buf *bytes.Buffer) error {

@@ -27,7 +27,7 @@ func pptxFileConverter(path string, docs *Documents) error {
 		return err
 	}
 
-	markdownFile := docs.MetaData.ParseFileNameFromMetaData()
+	markdownFile := docs.GetMarkdownFileName()
 
 	if err := runCommandInDir(workDir, nil, "pptx2md",
 		sourcePath,
@@ -98,7 +98,7 @@ func pptxFileConverter(path string, docs *Documents) error {
 
 	text := CleanupMarkdownContent(string(body))
 	docs.MarkdownFile = bytes.NewBufferString(injectSlideLinks(text, stateSlideLinks(docs)))
-	docs.ApplyMetaDataFrontmatter()
+	docs.applyMetaDataFrontmatter()
 
 	return nil
 }

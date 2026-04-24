@@ -54,7 +54,7 @@ func ConvertFile(path string) (*Documents, error) {
 	}
 	docs.OriginalFile = bytes.NewBuffer(orig)
 
-	if err := PopulateMetaData(path, &docs.MetaData); err != nil {
+	if err := docs.populateMetaData(path); err != nil {
 		return nil, err
 	}
 
@@ -67,7 +67,7 @@ func textFileConverter(path string, docs *Documents) error {
 		docs.MetaData.Version = "1.0"
 	}
 
-	docs.ApplyMetaDataFrontmatter()
+	docs.applyMetaDataFrontmatter()
 
 	return nil
 }

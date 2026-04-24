@@ -54,7 +54,7 @@ func convertDocxToMarkdown(path string, docs *Documents) error {
 
 	// Process markdown content
 	docs.MarkdownFile = bytes.NewBufferString(CleanupMarkdownContent(string(body)))
-	docs.ApplyMetaDataFrontmatter()
+	docs.applyMetaDataFrontmatter()
 
 	return nil
 }
