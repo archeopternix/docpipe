@@ -32,15 +32,13 @@ func pptxFileConverter(path string, docs *Documents) error {
 		return err
 	}
 
-	/*
-		body, err := os.ReadFile(filepath.Join(workDir, markdownFile))
-		if err != nil {
-			return err
-		}
-	*/
+	body, err := os.ReadFile(filepath.Join(workDir, markdownFile))
+	if err != nil {
+		return err
+	}
 
 	// attach downloaded media files
-	filepath.Walk(filepath.Join(workDir, "media"), func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(filepath.Join(workDir, "media"), func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
@@ -60,12 +58,13 @@ func pptxFileConverter(path string, docs *Documents) error {
 		}
 		docs.ExtractedImages[filepath.ToSlash(relPath)] = bytes.NewBuffer(fileBody)
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
 	// adjust media links in markdown
 
 	// Make screenshots of slides
-	if err := checkScreenshotAvailability(); err != nil {
-
+	if err := checkScreenshotAvailability(); err == nil {
 		screensDir, err := os.MkdirTemp("", "pptx-slides-*")
 		if err != nil {
 			return err
@@ -91,6 +90,12 @@ func pptxFileConverter(path string, docs *Documents) error {
 			docs.ExtractedSlides[entry.Name()] = bytes.NewBuffer(slideBody)
 		}
 	}
+
+	text := CleanupMarkdownContent(string(body))
+	text = ApplyMetaDataFrontmatter(text, &docs.MetaData)
+	text = injectSlideLinks(text, stateSlideLinks(docs))
+	docs.MarkdownFile = bytes.NewBufferString(text)
+
 	return nil
 }
 
@@ -119,6 +124,15 @@ func checkScreenshotAvailability() error {
 }
 
 func exportPptxSlideScreenshots(sourcePath, outputDir string) error {
+	sourcePath, err := filepath.Abs(sourcePath)
+	if err != nil {
+		return err
+	}
+	outputDir, err = filepath.Abs(outputDir)
+	if err != nil {
+		return err
+	}
+
 	if err := ensureDirs(outputDir); err != nil {
 		return err
 	}
@@ -255,10 +269,10 @@ func exportPptxSlideScreenshotsLinux(sourcePath, outputDir string) error {
 func stateSlideLinks(doc *Documents) []string {
 	var slideLinks []string
 	for name := range doc.ExtractedSlides {
-		if strings.ToLower(filepath.Ext(name)) != ".png" || !strings.HasPrefix(filepath.ToSlash(name), "slides/") {
+		if strings.ToLower(filepath.Ext(name)) != ".png" {
 			continue
 		}
-		slideLinks = append(slideLinks, filepath.ToSlash(name))
+		slideLinks = append(slideLinks, filepath.ToSlash(filepath.Join("slides", name)))
 	}
 	sort.Strings(slideLinks)
 	return slideLinks

@@ -459,8 +459,12 @@ func applyOfficeCoreProperties(meta *MetaData, props officeCoreProperties) {
 	if meta == nil {
 		return
 	}
-	meta.Author = strings.TrimSpace(props.Creator)
-	meta.Title = strings.TrimSpace(props.Title)
+	if author := strings.TrimSpace(props.Creator); author != "" {
+		meta.Author = author
+	}
+	if title := strings.TrimSpace(props.Title); title != "" {
+		meta.Title = title
+	}
 	if meta.Version == "" {
 		meta.Version = normalizeVersion(props.Revision)
 	}
