@@ -1,13 +1,12 @@
 package main
 
 import (
+	. "docpipe"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
-
-	docio "docpipe/io"
 )
 
 func main() {
@@ -16,7 +15,7 @@ func main() {
 		inputPath = os.Args[1]
 	}
 
-	docs, err := docio.ConvertFile(inputPath)
+	docs, err := CreateFromMarkdown(inputPath)
 	if err != nil {
 		log.Fatalf("convert %s: %v", inputPath, err)
 	}
@@ -31,6 +30,7 @@ func main() {
 }
 
 func defaultInputPath() string {
-	//return filepath.Join("TestData", "strategy_IT_V1.3.docx")
-	return filepath.Join("TestData", "real.pptx")
+	// return filepath.Join("TestData", "strategy_IT_V1.3.docx")
+	//return filepath.Join("TestData", "real.pptx")
+	return filepath.Join("TestData", "sample.md")
 }

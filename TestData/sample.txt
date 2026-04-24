@@ -1,2 +1,0 @@
-The contract should be translated after language detection.
-This is sample input for the docpipe pipeline.
