@@ -22,7 +22,7 @@ var (
 	officeMu = &sync.Mutex{}
 
 	fileConverters = map[string]fileConverter{
-		".docx":     ConvertDocxToMarkdown,
+		".docx":     convertDocxToMarkdown,
 		".pptx":     pptxFileConverter,
 		".md":       textFileConverter,
 		".markdown": textFileConverter,
@@ -71,7 +71,7 @@ func SaveZip(path string, buf *bytes.Buffer) error {
 }
 */
 
-func pptxFileConverter(path string, docs *Documents) error {
+func _pptxFileConverter(path string, docs *Documents) error {
 
 	officeMu.Lock()
 	defer officeMu.Unlock()

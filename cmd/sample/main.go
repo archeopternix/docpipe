@@ -31,5 +31,6 @@ func main() {
 }
 
 func defaultInputPath() string {
-	return filepath.Join("TestData", "strategy_IT_V1.3.docx")
+	//return filepath.Join("TestData", "strategy_IT_V1.3.docx")
+	return filepath.Join("TestData", "real.pptx")
 }

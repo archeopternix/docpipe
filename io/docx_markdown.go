@@ -1,20 +1,18 @@
 package io
 
 import (
-	"archive/zip"
 	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
 // ConvertDocxToMarkdownZip converts one DOCX source into a ZIP containing the
 // generated markdown at the ZIP root, extracted media under media/, and the
 // original DOCX under document/.
-func ConvertDocxToMarkdown(path string, docs *Documents) error {
+func convertDocxToMarkdown(path string, docs *Documents) error {
 
 	mediaDir, err := os.MkdirTemp("", "docx-media-*")
 	if err != nil {
@@ -96,6 +94,7 @@ func collectExtractedMediaFiles(mediaDir string) (map[string][]byte, error) {
 	return files, nil
 }
 
+/*
 func normalizeZipImagePath(pathValue, mediaDir string) string {
 	pathValue = strings.TrimSpace(strings.Trim(pathValue, `"'`))
 	pathValue = strings.ReplaceAll(pathValue, "\\", "/")
@@ -145,3 +144,4 @@ func WriteZipToBuffer(files map[string][]byte) (*bytes.Buffer, error) {
 
 	return &buf, nil
 }
+*/
