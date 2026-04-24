@@ -53,15 +53,10 @@ func convertDocxToMarkdown(path string, docs *Documents) error {
 	}
 
 	// Process markdown content
-	text := CleanupMarkdownContent(string(body))
-	text = ApplyMetaDataFrontmatter(text, &docs.MetaData)
-	docs.MarkdownFile = bytes.NewBufferString(text)
+	docs.MarkdownFile = bytes.NewBufferString(CleanupMarkdownContent(string(body)))
+	docs.ApplyMetaDataFrontmatter()
 
 	return nil
-}
-
-func stem(path string) string {
-	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 }
 
 func collectExtractedMediaFiles(mediaDir string) (map[string][]byte, error) {
@@ -93,55 +88,3 @@ func collectExtractedMediaFiles(mediaDir string) (map[string][]byte, error) {
 
 	return files, nil
 }
-
-/*
-func normalizeZipImagePath(pathValue, mediaDir string) string {
-	pathValue = strings.TrimSpace(strings.Trim(pathValue, `"'`))
-	pathValue = strings.ReplaceAll(pathValue, "\\", "/")
-	pathValue = strings.ReplaceAll(pathValue, filepath.ToSlash(mediaDir)+"/media/", "/media/")
-	pathValue = strings.ReplaceAll(pathValue, filepath.ToSlash(mediaDir)+"/", "/media/")
-	if strings.Contains(pathValue, "/media/") {
-		return "/media/" + filepath.Base(pathValue)
-	}
-	if strings.HasPrefix(pathValue, "media/") {
-		return "/" + pathValue
-	}
-	if strings.HasPrefix(pathValue, "/media/") {
-		return pathValue
-	}
-	return "/media/" + filepath.Base(pathValue)
-}
-
-func WriteZipToBuffer(files map[string][]byte) (*bytes.Buffer, error) {
-	var buf bytes.Buffer
-	writer := zip.NewWriter(&buf)
-
-	names := make([]string, 0, len(files))
-	for name := range files {
-		names = append(names, filepath.ToSlash(name))
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		header := &zip.FileHeader{
-			Name:   name,
-			Method: zip.Deflate,
-		}
-		entryWriter, err := writer.CreateHeader(header)
-		if err != nil {
-			_ = writer.Close()
-			return nil, err
-		}
-		if _, err := bytes.NewReader(files[name]).WriteTo(entryWriter); err != nil {
-			_ = writer.Close()
-			return nil, err
-		}
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, err
-	}
-
-	return &buf, nil
-}
-*/

@@ -62,52 +62,12 @@ func ConvertFile(path string) (*Documents, error) {
 	return docs, err
 }
 
-/*
-func SaveZip(path string, buf *bytes.Buffer) error {
-	if buf == nil {
-		return os.ErrInvalid
-	}
-	return os.WriteFile(path, append([]byte(nil), buf.Bytes()...), 0o644)
-}
-*/
-
-func _pptxFileConverter(path string, docs *Documents) error {
-
-	officeMu.Lock()
-	defer officeMu.Unlock()
-
-	reader, err := zip.OpenReader(path)
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-
-	props, err := readOfficeCorePropertiesFromFiles(reader.File)
-	if err != nil {
-		return err
-	}
-	applyOfficeCoreProperties(&docs.MetaData, props)
-
-	text, err := extractPptxText(reader.File)
-	if err != nil {
-		return err
-	}
-	docs.MarkdownFile = bytes.NewBufferString(text)
-
-	return nil
-}
-
 func textFileConverter(path string, docs *Documents) error {
 	if docs.MetaData.Version == "" {
 		docs.MetaData.Version = "1.0"
 	}
 
-	frontmatter := ApplyMetaDataFrontmatter("", &docs.MetaData)
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	docs.MarkdownFile = bytes.NewBuffer(append([]byte(frontmatter), body...))
+	docs.ApplyMetaDataFrontmatter()
 
 	return nil
 }
@@ -209,59 +169,3 @@ func extractXMLText(file *zip.File, options xmlTextOptions) (string, error) {
 
 	return strings.TrimSpace(builder.String()), nil
 }
-
-/*
-func findZipFile(files []*zip.File, name string) *zip.File {
-	for _, file := range files {
-		if file.Name == name {
-			return file
-		}
-	}
-	return nil
-}
-
-
-func zipPayload(name string, body []byte) (*bytes.Buffer, error) {
-	buf := bytes.NewBuffer(nil)
-	writer := zip.NewWriter(buf)
-
-	entry, err := writer.Create(name)
-	if err != nil {
-		_ = writer.Close()
-		return nil, err
-	}
-	if _, err := entry.Write(body); err != nil {
-		_ = writer.Close()
-		return nil, err
-	}
-	if err := writer.Close(); err != nil {
-		return nil, err
-	}
-	return buf, nil
-}
-
-func zipEntryName(path string) string {
-	ext := normalizeExtension(filepath.Ext(path))
-	switch ext {
-	case ".md", ".markdown":
-		return "document.md"
-	default:
-		return "document.txt"
-	}
-}
-*/
-
-/*
-func extractWordText(files []*zip.File) (string, error) {
-	file := findZipFile(files, "word/document.xml")
-	if file == nil {
-		return "", nil
-	}
-	return extractXMLText(file, xmlTextOptions{
-		textNames:      map[string]bool{"t": true},
-		tabNames:       map[string]bool{"tab": true},
-		breakNames:     map[string]bool{"br": true, "cr": true},
-		paragraphNames: map[string]bool{"p": true},
-	})
-}
-*/

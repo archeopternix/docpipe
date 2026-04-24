@@ -58,6 +58,10 @@ func normalizeNewlines(input string) string {
 
 func cleanupNormalizeMediaPath(pathValue string) string {
 	pathValue = strings.TrimSpace(strings.Trim(pathValue, `"'`))
+	pathValue = strings.ReplaceAll(pathValue, "%5C", "/")
+	pathValue = strings.ReplaceAll(pathValue, "%5c", "/")
+	pathValue = strings.ReplaceAll(pathValue, "_5C", "/")
+	pathValue = strings.ReplaceAll(pathValue, "_5c", "/")
 	pathValue = strings.ReplaceAll(pathValue, "\\", "/")
 	segments := strings.Split(pathValue, "/")
 	last := ""
@@ -167,9 +171,9 @@ func cleanupTableHTMLToMarkdown(tableHTML string) (string, bool) {
 	}
 
 	var builder strings.Builder
-	builder.WriteString(RenderMarkdownRow(header))
+	builder.WriteString(renderMarkdownRow(header))
 	builder.WriteString("\n")
-	builder.WriteString(RenderMarkdownSeparator(colCount))
+	builder.WriteString(renderMarkdownSeparator(colCount))
 	builder.WriteString("\n")
 
 	rowCount := 0
@@ -184,7 +188,7 @@ func cleanupTableHTMLToMarkdown(tableHTML string) (string, bool) {
 				row[j] = hTMLTableHasCellText(cells[j])
 			}
 		}
-		builder.WriteString(RenderMarkdownRow(row))
+		builder.WriteString(renderMarkdownRow(row))
 		builder.WriteString("\n")
 		rowCount++
 	}
@@ -196,7 +200,7 @@ func cleanupTableHTMLToMarkdown(tableHTML string) (string, bool) {
 			prefix := strings.TrimSpace(header[i]) + " "
 			values[i] = strings.TrimSpace(strings.TrimPrefix(full, prefix))
 		}
-		builder.WriteString(RenderMarkdownRow(values))
+		builder.WriteString(renderMarkdownRow(values))
 		builder.WriteString("\n")
 	}
 
@@ -329,7 +333,7 @@ func hTMLTableHasCellText(cell *html.Node) string {
 	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
 }
 
-func RenderMarkdownRow(cells []string) string {
+func renderMarkdownRow(cells []string) string {
 	escaped := make([]string, len(cells))
 	for i, cell := range cells {
 		cell = strings.ReplaceAll(cell, "|", `\|`)
@@ -338,7 +342,7 @@ func RenderMarkdownRow(cells []string) string {
 	return "| " + strings.Join(escaped, " | ") + " |"
 }
 
-func RenderMarkdownSeparator(n int) string {
+func renderMarkdownSeparator(n int) string {
 	if n <= 0 {
 		return "| --- |"
 	}

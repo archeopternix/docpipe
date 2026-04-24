@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -112,28 +111,36 @@ func (d *Documents) CreateZipBytes(writer *zip.Writer) error {
 	return nil
 }
 
-func (d *Documents) ReadFromOriginalFile(path string) error {
-	r, err := os.Open(path)
-	if err != nil {
-		return err
+func (d *Documents) ApplyMetaDataFrontmatter() {
+	if d == nil {
+		return
 	}
-	defer r.Close()
 
-	buf := new(bytes.Buffer)
-	if _, err := buf.ReadFrom(r); err != nil {
-		return err
+	// strip existing frontmatter
+	body := ""
+	if d.MarkdownFile != nil {
+		body = d.MarkdownFile.String()
 	}
-	d.OriginalFile = buf
-	return nil
-}
+	body = strings.TrimLeft(stripLeadingFrontmatter(normalizeFrontmatterNewlines(body)), "\n")
 
-func (d *Documents) ReadFromStream(r io.Reader) error {
-	buf := new(bytes.Buffer)
-	if _, err := buf.ReadFrom(r); err != nil {
-		return err
-	}
-	d.OriginalFile = buf
-	return nil
+	var builder strings.Builder
+	builder.WriteString("---\n")
+	writeFrontmatterString(&builder, "title", d.MetaData.Title)
+	writeFrontmatterString(&builder, "subtitle", d.MetaData.Subtitle)
+	writeFrontmatterString(&builder, "date", formatFrontmatterDate(d.MetaData.Date))
+	writeFrontmatterString(&builder, "changed_date", formatFrontmatterDate(d.MetaData.ChangedDate))
+	writeFrontmatterString(&builder, "original_document", normalizeOriginalDocumentPath(d.MetaData.OriginalDocument))
+	writeFrontmatterString(&builder, "original_format", d.MetaData.OriginalFormat)
+	writeFrontmatterString(&builder, "version", d.MetaData.Version)
+	writeFrontmatterString(&builder, "language", d.MetaData.Language)
+	writeFrontmatterString(&builder, "abstract", d.MetaData.Abstract)
+	writeFrontmatterKeywords(&builder, d.MetaData.Keywords)
+	writeFrontmatterString(&builder, "author", d.MetaData.Author)
+	builder.WriteString("---\n\n")
+	builder.WriteString(strings.TrimRight(body, "\n"))
+	builder.WriteString("\n")
+
+	d.MarkdownFile = bytes.NewBufferString(builder.String())
 }
 
 func writeZipEntry(writer *zip.Writer, name string, buf *bytes.Buffer) error {
@@ -170,15 +177,6 @@ func zipFileName(name string) string {
 		base = "document"
 	}
 	return base + ".zip"
-}
-
-func markdownEntryName(fileName string) string {
-	base := strings.TrimSpace(filepath.Base(fileName))
-	base = strings.TrimSuffix(base, filepath.Ext(base))
-	if base == "" {
-		base = "document"
-	}
-	return base + ".md"
 }
 
 func documentEntryName(originalDocument string) string {

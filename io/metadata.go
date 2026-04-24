@@ -16,10 +16,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const markdownVersionMaxSuffix = 1000
+
 var (
-	markdownFilenamePattern = regexp.MustCompile(`(?i)^(.*)_([a-z]{2})_v(\d+(?:\.\d+)*)$`)
-	versionPattern          = regexp.MustCompile(`^\d+(?:\.\d+)*$`)
-	datetimelayout          = "2006-01-02 15:04:05"
+	markdownFilenamePattern    = regexp.MustCompile(`(?i)^(.*)_([a-z]{2})_v(\d+(?:\.\d+)*)$`)
+	versionPattern             = regexp.MustCompile(`^\d+(?:\.\d+)*$`)
+	datetimelayout             = "2006-01-02 15:04:05"
+	markdownVersionFilePattern = regexp.MustCompile(`(?i)^(.*)_([a-z]{2})_v(\d+(?:\.\d+)*)$`)
+	markdownVersionPattern     = regexp.MustCompile(`^\d+(?:\.\d+)*$`)
 )
 
 // MetaData holds the metadata information of a document.
@@ -53,28 +57,6 @@ type officeCoreProperties struct {
 	Description string   `xml:"description"`
 	Language    string   `xml:"language"`
 	Revision    string   `xml:"revision"`
-}
-
-func ApplyMetaDataFrontmatter(body string, meta *MetaData) string {
-	body = strings.TrimLeft(stripLeadingFrontmatter(normalizeFrontmatterNewlines(body)), "\n")
-
-	var builder strings.Builder
-	builder.WriteString("---\n")
-	writeFrontmatterString(&builder, "title", meta.Title)
-	writeFrontmatterString(&builder, "subtitle", meta.Subtitle)
-	writeFrontmatterString(&builder, "date", formatFrontmatterDate(meta.Date))
-	writeFrontmatterString(&builder, "changed_date", formatFrontmatterDate(meta.ChangedDate))
-	writeFrontmatterString(&builder, "original_document", normalizeOriginalDocumentPath(meta.OriginalDocument))
-	writeFrontmatterString(&builder, "original_format", meta.OriginalFormat)
-	writeFrontmatterString(&builder, "version", meta.Version)
-	writeFrontmatterString(&builder, "language", meta.Language)
-	writeFrontmatterString(&builder, "abstract", meta.Abstract)
-	writeFrontmatterKeywords(&builder, meta.Keywords)
-	writeFrontmatterString(&builder, "author", meta.Author)
-	builder.WriteString("---\n\n")
-	builder.WriteString(strings.TrimRight(body, "\n"))
-	builder.WriteString("\n")
-	return builder.String()
 }
 
 func PopulateMetaData(path string, meta *MetaData) error {
@@ -479,4 +461,74 @@ func applyOfficeCoreProperties(meta *MetaData, props officeCoreProperties) {
 		meta.Abstract = strings.TrimSpace(props.Subject)
 	}
 	meta.Keywords = normalizeKeywords(props.Keywords)
+}
+
+// ParseLanguageFromFile reads language information from fileName.
+func parseLanguageFromFile(path string) string {
+	stem := strings.TrimSpace(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+	if stem == "" {
+		return ""
+	}
+
+	matches := markdownVersionFilePattern.FindStringSubmatch(stem)
+	if len(matches) != 4 {
+		return ""
+	}
+
+	return normalizeVersionLanguage(matches[2])
+}
+
+// ParseVersionFromFile reads version information from fileName.
+func parseVersionFromFile(path string) string {
+	stem := strings.TrimSpace(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+	if stem == "" {
+		return ""
+	}
+
+	matches := markdownVersionFilePattern.FindStringSubmatch(stem)
+	if len(matches) != 4 {
+		return ""
+	}
+
+	return normalizeMarkdownVersion(matches[3])
+}
+
+func normalizeMarkdownVersion(value string) string {
+	normalized := strings.TrimSpace(value)
+	normalized = strings.TrimPrefix(strings.TrimPrefix(normalized, "v"), "V")
+	if !markdownVersionPattern.MatchString(normalized) {
+		return ""
+	}
+	return normalized
+}
+
+func normalizeVersionLanguage(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return "en"
+	}
+
+	switch normalized {
+	case "english":
+		return "en"
+	case "german", "deutsch":
+		return "de"
+	}
+
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+	if idx := strings.IndexByte(normalized, '-'); idx >= 0 {
+		normalized = normalized[:idx]
+	}
+	if len(normalized) > 2 {
+		normalized = normalized[:2]
+	}
+	if len(normalized) != 2 {
+		return "en"
+	}
+	for _, r := range normalized {
+		if r < 'a' || r > 'z' {
+			return "en"
+		}
+	}
+	return normalized
 }

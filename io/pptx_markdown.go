@@ -22,12 +22,17 @@ func pptxFileConverter(path string, docs *Documents) error {
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
 
+	sourcePath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
 	markdownFile := docs.MetaData.ParseFileNameFromMetaData()
 
-	if err := runCommand(nil, "pptx2md",
-		path,
-		"-o", filepath.Join(workDir, markdownFile),
-		"-i", filepath.Join(workDir, "media"),
+	if err := runCommandInDir(workDir, nil, "pptx2md",
+		sourcePath,
+		"-o", markdownFile,
+		"-i", "media",
 	); err != nil {
 		return err
 	}
@@ -92,9 +97,8 @@ func pptxFileConverter(path string, docs *Documents) error {
 	}
 
 	text := CleanupMarkdownContent(string(body))
-	text = ApplyMetaDataFrontmatter(text, &docs.MetaData)
-	text = injectSlideLinks(text, stateSlideLinks(docs))
-	docs.MarkdownFile = bytes.NewBufferString(text)
+	docs.MarkdownFile = bytes.NewBufferString(injectSlideLinks(text, stateSlideLinks(docs)))
+	docs.ApplyMetaDataFrontmatter()
 
 	return nil
 }
@@ -386,7 +390,12 @@ func countPptxSlides(path string) (int, error) {
 }
 
 func runCommand(logger func(string, ...any), command string, args ...string) error {
+	return runCommandInDir("", logger, command, args...)
+}
+
+func runCommandInDir(dir string, logger func(string, ...any), command string, args ...string) error {
 	cmd := exec.Command(command, args...)
+	cmd.Dir = dir
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if logger != nil {
