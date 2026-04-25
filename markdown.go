@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"fmt"
-	stdio "io"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -35,6 +35,12 @@ type Markdown struct {
 	extractedSlides  map[string]*bytes.Buffer // will be save in /slides
 	markdownVersions map[string]*bytes.Buffer // will be save in /versions under the id "<lang>_<version>" e.g. "DE_v1.2"
 	metaData         MetaData
+
+	zipr            *zip.Reader
+	zipIndex        map[string]*zip.File
+	zipSize         int64
+	zipMarkdownName string
+	zipPath         string
 }
 
 // MetaData holds the metadata information of the markdown document.
@@ -67,10 +73,10 @@ type MetaData struct {
 //   - If no root markdown exists, returns an error.
 func ParseZipFile(path string) (*Markdown, error) {
 	if _, err := os.Stat(path); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %q: %w", ErrInvalidInput, path, err)
 	}
 	if strings.ToLower(filepath.Ext(path)) != ".zip" {
-		return nil, fmt.Errorf("zip import not supported for %q", filepath.Ext(path))
+		return nil, fmt.Errorf("%w: zip import not supported for %q", ErrUnsupported, filepath.Ext(path))
 	}
 
 	reader, err := zip.OpenReader(path)
@@ -111,11 +117,11 @@ func ParseZipFile(path string) (*Markdown, error) {
 				doc.metaData.OriginalFormat = strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".")
 			}
 		case strings.HasPrefix(name, "media/"):
-			doc.extractedImages[strings.TrimPrefix(name, "media/")] = bytes.NewBuffer(body)
+			doc.extractedImages[name] = bytes.NewBuffer(body)
 		case strings.HasPrefix(name, "slides/"):
-			doc.extractedSlides[strings.TrimPrefix(name, "slides/")] = bytes.NewBuffer(body)
+			doc.extractedSlides[name] = bytes.NewBuffer(body)
 		case strings.HasPrefix(name, "versions/"):
-			doc.markdownVersions[strings.TrimPrefix(name, "versions/")] = bytes.NewBuffer(body)
+			doc.markdownVersions[name] = bytes.NewBuffer(body)
 		case markdownZipIsRootMarkdown(name):
 			doc.markdownFile = bytes.NewBuffer(body)
 			markdownZipApplyMarkdownMetaData(doc, name, string(body))
@@ -200,13 +206,13 @@ func (d *Markdown) CreateZipBytes(writer *zip.Writer) error {
 	}
 
 	for _, name := range markdownSortedMapKeys(d.extractedImages) {
-		if err := markdownWriteZipEntry(writer, markdownPrefixedEntryName("media", name), d.extractedImages[name]); err != nil {
+		if err := markdownWriteZipEntry(writer, filepath.ToSlash(name), d.extractedImages[name]); err != nil {
 			return err
 		}
 	}
 
 	for _, name := range markdownSortedMapKeys(d.extractedSlides) {
-		if err := markdownWriteZipEntry(writer, markdownPrefixedEntryName("slides", name), d.extractedSlides[name]); err != nil {
+		if err := markdownWriteZipEntry(writer, filepath.ToSlash(name), d.extractedSlides[name]); err != nil {
 			return err
 		}
 	}
@@ -216,7 +222,7 @@ func (d *Markdown) CreateZipBytes(writer *zip.Writer) error {
 		if filepath.Ext(entryName) == "" {
 			entryName += ".md"
 		}
-		if err := markdownWriteZipEntry(writer, markdownPrefixedEntryName("versions", entryName), d.markdownVersions[name]); err != nil {
+		if err := markdownWriteZipEntry(writer, filepath.ToSlash(entryName), d.markdownVersions[name]); err != nil {
 			return err
 		}
 	}
@@ -235,13 +241,25 @@ func (d Markdown) GetMarkdownFileName() string {
 // These are not intended for external use and may be subject to change.
 
 func markdownZipReadFile(file *zip.File) ([]byte, error) {
+	if file == nil {
+		return nil, fmt.Errorf("%w: zip entry is nil", ErrInvalidInput)
+	}
+
 	rc, err := file.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer rc.Close()
 
-	return stdio.ReadAll(rc)
+	var buf bytes.Buffer
+	limited := io.LimitReader(rc, defaultMaxZipEntryReadBytes+1)
+	if _, err := io.CopyBuffer(&buf, limited, make([]byte, 32*1024)); err != nil {
+		return nil, err
+	}
+	if int64(buf.Len()) > defaultMaxZipEntryReadBytes {
+		return nil, fmt.Errorf("%w: zip entry %q exceeds %d bytes", ErrInvalidInput, file.Name, defaultMaxZipEntryReadBytes)
+	}
+	return append([]byte(nil), buf.Bytes()...), nil
 }
 
 func markdownZipCleanEntryName(name string) string {
@@ -346,14 +364,4 @@ func markdownDocumentEntryName(originalDocument string) string {
 		base = "document.bin"
 	}
 	return filepath.ToSlash(filepath.Join("document", base))
-}
-
-func markdownPrefixedEntryName(prefix, name string) string {
-	clean := strings.TrimSpace(filepath.ToSlash(name))
-	clean = strings.TrimPrefix(clean, "/")
-	clean = strings.TrimPrefix(clean, prefix+"/")
-	if clean == "" {
-		clean = "file"
-	}
-	return filepath.ToSlash(filepath.Join(prefix, clean))
 }

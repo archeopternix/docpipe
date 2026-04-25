@@ -2,6 +2,7 @@ package docpipe
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,20 +29,30 @@ type mdFileNameParts struct {
 //   - Applies (normalizes/rewrites) YAML frontmatter.
 //   - Generates a ZIP filename for later export.
 func ParseMarkdownFile(path string) (*Markdown, error) {
+	return ParseMarkdownFileContext(context.Background(), path, nil)
+}
+
+// ParseMarkdownFileContext loads a standalone markdown file with cancellation support.
+func ParseMarkdownFileContext(ctx context.Context, path string, params *PowerPointParams) (*Markdown, error) {
+	ctx = contextOrBackground(ctx)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %q: %w", ErrInvalidInput, path, err)
 	}
 
 	switch mdNormalizeExtension(filepath.Ext(path)) {
 	case ".md", ".markdown":
 	default:
-		return nil, fmt.Errorf("markdown conversion not supported for %q", filepath.Ext(path))
+		return nil, fmt.Errorf("%w: markdown conversion not supported for %q", ErrUnsupported, filepath.Ext(path))
 	}
 
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %q: %w", ErrInvalidInput, path, err)
 	}
 
 	meta := *mdDefaultMetaData(path)
@@ -123,7 +134,7 @@ func mdParseMetaData(body string, defaults MetaData) (MetaData, bool, error) {
 	meta.ChangedDate = mdFirstNonEmpty(mdReadStringField(raw, "changed_date"), defaults.ChangedDate)
 	meta.OriginalDocument = mdFirstNonEmpty(mdReadStringField(raw, "original_document"), defaults.OriginalDocument)
 	meta.OriginalFormat = mdFirstNonEmpty(mdReadStringField(raw, "original_format"), defaults.OriginalFormat)
-	meta.Version = mdFirstNonEmpty(defaults.Version, mdNormalizeVersion(mdReadStringField(raw, "version")))
+	meta.Version = mdFirstNonEmpty(mdNormalizeVersion(mdReadStringField(raw, "version")), defaults.Version)
 	meta.Language = mdFirstNonEmpty(defaults.Language, mdNormalizeLanguageCode(mdReadStringField(raw, "language")), mdNormalizeLanguageCode(mdReadStringField(raw, "lang")))
 	meta.Abstract = mdReadStringField(raw, "abstract")
 	meta.Keywords = mdNormalizeKeywords(raw["keywords"])

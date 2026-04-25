@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 
 	"golang.org/x/net/html"
@@ -70,22 +71,33 @@ type openAIResponsesResponse struct {
 // Returns a pointer to the detected ISO 639-1 code. If detection fails, an error is returned and the markdown is unchanged.
 func (m *Markdown) LanguageDetectionAI(usingAI bool) (*string, error) {
 	if !usingAI {
-		return nil, fmt.Errorf("language detection by AI is disabled")
+		return nil, fmt.Errorf("%w: language detection by AI is disabled", ErrAIUnavailable)
 	}
-	if m == nil || m.markdownFile == nil {
-		return nil, fmt.Errorf("markdown is nil")
+	if m == nil {
+		return nil, fmt.Errorf("%w: markdown is nil", ErrInvalidInput)
+	}
+	text, err := m.currentMarkdownString()
+	if err != nil {
+		return nil, err
+	}
+	return detectMarkdownLanguageAI(text, usingAI)
+}
+
+func detectMarkdownLanguageAI(text string, usingAI bool) (*string, error) {
+	if !usingAI {
+		return nil, fmt.Errorf("%w: language detection by AI is disabled", ErrAIUnavailable)
 	}
 	active, err := DetectAI()
 	if err != nil {
 		return nil, err
 	}
 	if !active {
-		return nil, fmt.Errorf("AI is not active")
+		return nil, fmt.Errorf("%w: AI is not active", ErrAIUnavailable)
 	}
 
 	code, err := openAIText(
 		`Detect the primary language of the markdown document. Return only the ISO 639-1 language code in lowercase, for example "de" or "en".`,
-		m.markdownFile.String(),
+		text,
 	)
 	if err != nil {
 		return nil, err
@@ -97,11 +109,11 @@ func (m *Markdown) LanguageDetectionAI(usingAI bool) (*string, error) {
 		code = code[:idx]
 	}
 	if len(code) != 2 {
-		return nil, fmt.Errorf("openai returned invalid language code %q", code)
+		return nil, fmt.Errorf("%w: openai returned invalid language code %q", ErrAIUnavailable, code)
 	}
 	for _, r := range code {
 		if r < 'a' || r > 'z' {
-			return nil, fmt.Errorf("openai returned invalid language code %q", code)
+			return nil, fmt.Errorf("%w: openai returned invalid language code %q", ErrAIUnavailable, code)
 		}
 	}
 
@@ -118,15 +130,15 @@ func (m *Markdown) LanguageDetectionAI(usingAI bool) (*string, error) {
 func DetectAI() (bool, error) {
 	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	if apiKey == "" {
-		return false, nil
+		return false, fmt.Errorf("%w: OPENAI_API_KEY is not set", ErrAIUnavailable)
 	}
 	if strings.ContainsAny(apiKey, "\r\n") {
-		return false, fmt.Errorf("OPENAI_API_KEY contains invalid line breaks")
+		return false, fmt.Errorf("%w: OPENAI_API_KEY contains invalid line breaks", ErrInvalidInput)
 	}
 
 	model := strings.TrimSpace(os.Getenv("OPENAI_MODEL"))
 	if strings.ContainsAny(model, "\r\n") {
-		return false, fmt.Errorf("OPENAI_MODEL contains invalid line breaks")
+		return false, fmt.Errorf("%w: OPENAI_MODEL contains invalid line breaks", ErrInvalidInput)
 	}
 
 	return true, nil
@@ -143,18 +155,19 @@ func DetectAI() (bool, error) {
 //   - If UsingAI is false, sets MetaData.Language to "xx".
 //   - Bumps the minor version and re-applies YAML frontmatter.
 func (m *Markdown) CleanUpMarkdown(param *CleanUpParameters) error {
-	if m == nil || m.markdownFile == nil {
+	if m == nil {
 		return fmt.Errorf("markdown is nil")
 	}
 	if param == nil {
 		param = &CleanUpParameters{CleanUpTables: true}
 	}
 
-	if err := m.archiveCurrentMarkdown(); err != nil {
+	current, err := m.currentMarkdownString()
+	if err != nil {
 		return err
 	}
 
-	text := cleanMarkdownContent(m.markdownFile.String(), param.CleanUpTables)
+	text := cleanMarkdownContent(current, param.CleanUpTables)
 	if param.UsingAI {
 		cleaned, err := openAIText(
 			`Clean and reformat this markdown document. Preserve all content, facts, headings, links, images, code blocks, and YAML frontmatter values. Do not summarize, omit, translate, or add content. Return only the cleaned markdown.`,
@@ -166,21 +179,21 @@ func (m *Markdown) CleanUpMarkdown(param *CleanUpParameters) error {
 		text = cleaned
 	}
 
-	previousMarkdown := m.markdownFile
-	m.markdownFile = bytes.NewBufferString(text)
+	previousMeta := m.metaData
 	if param.UsingAI {
-		code, err := m.LanguageDetectionAI(true)
+		code, err := detectMarkdownLanguageAI(text, true)
 		if err != nil {
-			m.markdownFile = previousMarkdown
 			return err
 		}
 		m.metaData.Language = *code
 	} else {
 		m.metaData.Language = "xx"
 	}
-	m.metaData.Version = bumpMinorVersion(m.metaData.Version)
-	mdApplyMetaDataFrontmatter(m)
 
+	if _, err := m.changeMarkdown(text); err != nil {
+		m.metaData = previousMeta
+		return err
+	}
 	return nil
 }
 
@@ -193,14 +206,15 @@ func (m *Markdown) CleanUpMarkdown(param *CleanUpParameters) error {
 //     tables, and factual content.
 //   - Updates metadata language (normalized) and re-applies YAML frontmatter.
 func (m *Markdown) TranslateTo(param *TranslationParameters) error {
-	if m == nil || m.markdownFile == nil {
+	if m == nil {
 		return fmt.Errorf("markdown is nil")
 	}
 	if param == nil || strings.TrimSpace(param.TargetLang) == "" {
 		return fmt.Errorf("target language is missing")
 	}
 
-	if err := m.archiveCurrentMarkdown(); err != nil {
+	current, err := m.currentMarkdownString()
+	if err != nil {
 		return err
 	}
 
@@ -216,18 +230,21 @@ func (m *Markdown) TranslateTo(param *TranslationParameters) error {
 		)
 	}
 
-	translated, err := openAIText(instruction, m.markdownFile.String())
+	translated, err := openAIText(instruction, current)
 	if err != nil {
 		return err
 	}
 
-	m.markdownFile = bytes.NewBufferString(translated)
+	previousMeta := m.metaData
 	if normalized := mdNormalizeLanguageCode(targetLang); normalized != "" {
 		m.metaData.Language = normalized
 	} else {
 		m.metaData.Language = "xx"
 	}
-	mdApplyMetaDataFrontmatter(m)
+	if _, err := m.changeMarkdown(translated); err != nil {
+		m.metaData = previousMeta
+		return err
+	}
 	return nil
 }
 
@@ -237,7 +254,7 @@ func openAIText(instructions, input string) (string, error) {
 		return "", err
 	}
 	if !active {
-		return "", fmt.Errorf("AI is not active")
+		return "", fmt.Errorf("%w: AI is not active", ErrAIUnavailable)
 	}
 
 	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
@@ -262,22 +279,31 @@ func openAIText(instructions, input string) (string, error) {
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 2 * time.Minute}
+	client := &http.Client{Timeout: defaultOpenAIHTTPTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: openai request failed: %w", ErrAIUnavailable, err)
 	}
 	defer resp.Body.Close()
 
-	var parsed openAIResponsesResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return "", err
-	}
-	if parsed.Error != nil {
-		return "", fmt.Errorf("openai error: %s", strings.TrimSpace(parsed.Error.Message))
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("%w: openai response read failed: %w", ErrAIUnavailable, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("openai request failed: %s", resp.Status)
+		var parsed openAIResponsesResponse
+		if err := json.Unmarshal(raw, &parsed); err == nil && parsed.Error != nil && strings.TrimSpace(parsed.Error.Message) != "" {
+			return "", fmt.Errorf("%w: openai request failed: %s", ErrAIUnavailable, strings.TrimSpace(parsed.Error.Message))
+		}
+		return "", fmt.Errorf("%w: openai request failed: %s: %s", ErrAIUnavailable, resp.Status, responseSnippet(raw))
+	}
+
+	var parsed openAIResponsesResponse
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", fmt.Errorf("%w: openai response decode failed: %w", ErrAIUnavailable, err)
+	}
+	if parsed.Error != nil {
+		return "", fmt.Errorf("%w: openai error: %s", ErrAIUnavailable, strings.TrimSpace(parsed.Error.Message))
 	}
 	if strings.TrimSpace(parsed.OutputText) != "" {
 		return strings.TrimSpace(parsed.OutputText), nil
@@ -297,7 +323,7 @@ func openAIText(instructions, input string) (string, error) {
 
 	text := strings.TrimSpace(builder.String())
 	if text == "" {
-		return "", fmt.Errorf("openai response did not contain text output")
+		return "", fmt.Errorf("%w: openai response did not contain text output", ErrAIUnavailable)
 	}
 	return text, nil
 }
@@ -314,6 +340,7 @@ func (m *Markdown) archiveCurrentMarkdown() error {
 	if name == "" {
 		name = "document.md"
 	}
+	name = "versions/" + filepath.Base(name)
 	m.markdownVersions[name] = bytes.NewBuffer(append([]byte(nil), m.markdownFile.Bytes()...))
 	return nil
 }
@@ -361,6 +388,10 @@ func cleanMarkdownContent(input string, cleanTables bool) string {
 	})
 	text = cleanStripHTML(text)
 	return cleanEscapedSpecialCharPattern.ReplaceAllString(text, "$1")
+}
+
+func NormalizeMarkdown(input string, cleanTables bool) string {
+	return cleanMarkdownContent(input, cleanTables)
 }
 
 func cleanNormalizeMediaPath(pathValue string) string {
