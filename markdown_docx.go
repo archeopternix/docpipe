@@ -120,7 +120,7 @@ func CreateFromWord(path string, params *WordParams) (*Markdown, error) {
 
 	doc.markdownFile = bytes.NewBufferString(officeCleanupMarkdownContent(string(body)))
 	mdApplyMetaDataFrontmatter(doc)
-	zipName := markdownZipFileName(mdFileName(doc.metaData))
+	zipName, err := markdownZipFileName(mdFileName(doc.metaData))
 	if err != nil {
 		return nil, err
 	}

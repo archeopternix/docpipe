@@ -54,15 +54,6 @@ func NewDocuments() *Documents {
 	}
 }
 
-type WordParams struct {
-	IncludeImages bool
-}
-
-type PowerPointParams struct {
-	IncludeSlides bool
-	IncludeImages bool
-}
-
 func CreateFromZip(path string) (*Markdown, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err

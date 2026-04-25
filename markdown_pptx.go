@@ -194,7 +194,7 @@ func CreateFromPowerPoint(path string, params *PowerPointParams) (*Markdown, err
 	}
 	doc.markdownFile = bytes.NewBufferString(text)
 	mdApplyMetaDataFrontmatter(doc)
-	zipName := markdownZipFileName(mdFileName(doc.metaData))
+	zipName, err := markdownZipFileName(mdFileName(doc.metaData))
 	if err != nil {
 		return nil, err
 	}

@@ -65,7 +65,7 @@ func CreateFromMarkdown(path string) (*Markdown, error) {
 	}
 
 	mdApplyMetaDataFrontmatter(doc)
-	zipName := markdownZipFileName(mdFileName(doc.metaData))
+	zipName, err := markdownZipFileName(mdFileName(doc.metaData))
 	if err != nil {
 		return nil, err
 	}
