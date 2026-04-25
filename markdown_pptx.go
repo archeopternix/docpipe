@@ -13,7 +13,12 @@ import (
 	"strings"
 )
 
-var markdownPPTXLibreOfficeSlideSuffixPattern = regexp.MustCompile(`(?i)\s*\d+\s*$`)
+var pptxLibreOfficeSlideSuffixPattern = regexp.MustCompile(`(?i)\s*\d+\s*$`)
+
+type PowerPointParams struct {
+	IncludeSlides bool
+	IncludeImages bool
+}
 
 func CreateFromPowerPoint(path string, params *PowerPointParams) (*Markdown, error) {
 	if params == nil {
@@ -26,35 +31,26 @@ func CreateFromPowerPoint(path string, params *PowerPointParams) (*Markdown, err
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
-	if markdownMDNormalizeExtension(filepath.Ext(path)) != ".pptx" {
+	if mdNormalizeExtension(filepath.Ext(path)) != ".pptx" {
 		return nil, fmt.Errorf("powerpoint conversion not supported for %q", filepath.Ext(path))
 	}
 
-	doc, err := markdownOfficeNewDocument(path)
+	doc, err := officeNewDocument(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := markdownPPTXConvertToMarkdown(path, doc, params); err != nil {
-		return nil, err
-	}
-	doc.fileName = markdownMDZipFileName(markdownMDFileName(doc.metaData))
-
-	return doc, nil
-}
-
-func markdownPPTXConvertToMarkdown(path string, doc *Markdown, params *PowerPointParams) error {
 	workDir, err := os.MkdirTemp("", "pptx2md-*")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
 
 	sourcePath, err := filepath.Abs(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	markdownFile := markdownMDFileName(doc.metaData)
+	markdownFile := mdFileName(doc.metaData)
 	args := []string{
 		sourcePath,
 		"-o", markdownFile,
@@ -63,13 +59,20 @@ func markdownPPTXConvertToMarkdown(path string, doc *Markdown, params *PowerPoin
 		args = append(args, "-i", "media")
 	}
 
-	if err := markdownPPTXRunCommandInDir(workDir, nil, "pptx2md", args...); err != nil {
-		return err
+	cmd := exec.Command("pptx2md", args...)
+	cmd.Dir = workDir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return nil, fmt.Errorf("%s", strings.TrimSpace(stderr.String()))
+		}
+		return nil, err
 	}
 
 	body, err := os.ReadFile(filepath.Join(workDir, markdownFile))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if params.IncludeImages {
@@ -94,24 +97,34 @@ func markdownPPTXConvertToMarkdown(path string, doc *Markdown, params *PowerPoin
 			doc.extractedImages[filepath.ToSlash(relPath)] = bytes.NewBuffer(fileBody)
 			return nil
 		}); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
 	if params.IncludeSlides {
-		if err := markdownPPTXCheckScreenshotAvailability(); err == nil {
+		screenshotAvailable := false
+		switch runtime.GOOS {
+		case "windows":
+			if err := pptxCommandAvailable("powershell", "pwsh"); err == nil {
+				cmd := exec.Command("reg", "query", `HKCR\PowerPoint.Application`)
+				screenshotAvailable = cmd.Run() == nil
+			}
+		case "linux":
+			screenshotAvailable = pptxCommandAvailable("soffice", "libreoffice") == nil
+		}
+		if screenshotAvailable {
 			screensDir, err := os.MkdirTemp("", "pptx-slides-*")
 			if err != nil {
-				return err
+				return nil, err
 			}
 			defer func() { _ = os.RemoveAll(screensDir) }()
 
-			if err := markdownPPTXExportSlideScreenshots(path, screensDir); err != nil {
-				return err
+			if err := pptxExportSlideScreenshots(path, screensDir); err != nil {
+				return nil, err
 			}
 			entries, err := os.ReadDir(screensDir)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			for _, entry := range entries {
 				if entry.IsDir() || strings.ToLower(filepath.Ext(entry.Name())) != ".png" {
@@ -120,46 +133,77 @@ func markdownPPTXConvertToMarkdown(path string, doc *Markdown, params *PowerPoin
 				slidePath := filepath.Join(screensDir, entry.Name())
 				slideBody, err := os.ReadFile(slidePath)
 				if err != nil {
-					return err
+					return nil, err
 				}
 				doc.extractedSlides[entry.Name()] = bytes.NewBuffer(slideBody)
 			}
 		}
 	}
 
-	text := markdownOfficeCleanupMarkdownContent(string(body))
+	text := officeCleanupMarkdownContent(string(body))
 	if params.IncludeSlides {
-		text = markdownPPTXInjectSlideLinks(text, markdownPPTXStateSlideLinks(doc))
+		var slideLinks []string
+		for name := range doc.extractedSlides {
+			if strings.ToLower(filepath.Ext(name)) != ".png" {
+				continue
+			}
+			slideLinks = append(slideLinks, filepath.ToSlash(filepath.Join("slides", name)))
+		}
+		sort.Strings(slideLinks)
+		lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+		var headingIdx []int
+		for i, line := range lines {
+			if strings.HasPrefix(strings.TrimSpace(line), "# ") {
+				headingIdx = append(headingIdx, i)
+			}
+		}
+		if len(headingIdx) == 0 {
+			var builder strings.Builder
+			builder.WriteString(strings.TrimRight(text, "\n"))
+			builder.WriteString("\n\n")
+			for _, link := range slideLinks {
+				builder.WriteString(fmt.Sprintf("[Slide screenshot](%s)\n\n", link))
+			}
+			text = builder.String()
+		} else {
+			var out []string
+			linkPos := 0
+			for i, line := range lines {
+				out = append(out, line)
+				nextHeading := false
+				for _, idx := range headingIdx[1:] {
+					if i+1 == idx {
+						nextHeading = true
+						break
+					}
+				}
+				lastLine := i == len(lines)-1
+				if (nextHeading || lastLine) && linkPos < len(slideLinks) {
+					if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
+						out = append(out, "")
+					}
+					out = append(out, fmt.Sprintf("[Slide screenshot](%s)", slideLinks[linkPos]), "")
+					linkPos++
+				}
+			}
+			for ; linkPos < len(slideLinks); linkPos++ {
+				out = append(out, fmt.Sprintf("[Slide screenshot](%s)", slideLinks[linkPos]), "")
+			}
+			text = strings.Join(out, "\n")
+		}
 	}
 	doc.markdownFile = bytes.NewBufferString(text)
-	markdownMDApplyMetaDataFrontmatter(doc)
-
-	return nil
-}
-
-func markdownPPTXCheckScreenshotAvailability() error {
-	switch runtime.GOOS {
-	case "windows":
-		if err := markdownPPTXCommandAvailable("powershell", "pwsh"); err != nil {
-			return fmt.Errorf("PowerShell not found: %w", err)
-		}
-
-		cmd := exec.Command("reg", "query", `HKCR\PowerPoint.Application`)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("Microsoft PowerPoint is not installed or not registered for COM")
-		}
-		return nil
-	case "linux":
-		if err := markdownPPTXCommandAvailable("soffice", "libreoffice"); err != nil {
-			return fmt.Errorf("LibreOffice not found: %w", err)
-		}
-		return nil
-	default:
-		return fmt.Errorf("PPTX screenshots are not supported on %s", runtime.GOOS)
+	mdApplyMetaDataFrontmatter(doc)
+	zipName := markdownZipFileName(mdFileName(doc.metaData))
+	if err != nil {
+		return nil, err
 	}
+	doc.fileName = zipName
+
+	return doc, nil
 }
 
-func markdownPPTXExportSlideScreenshots(sourcePath, outputDir string) error {
+func pptxExportSlideScreenshots(sourcePath, outputDir string) error {
 	sourcePath, err := filepath.Abs(sourcePath)
 	if err != nil {
 		return err
@@ -168,22 +212,23 @@ func markdownPPTXExportSlideScreenshots(sourcePath, outputDir string) error {
 	if err != nil {
 		return err
 	}
-
-	if err := markdownPPTXEnsureDirs(outputDir); err != nil {
-		return err
+	if outputDir != "" {
+		if err := os.MkdirAll(outputDir, 0o755); err != nil {
+			return err
+		}
 	}
 
 	switch runtime.GOOS {
 	case "windows":
-		return markdownPPTXExportSlideScreenshotsWindows(sourcePath, outputDir)
+		return pptxExportSlideScreenshotsWindows(sourcePath, outputDir)
 	case "linux":
-		return markdownPPTXExportSlideScreenshotsLinux(sourcePath, outputDir)
+		return pptxExportSlideScreenshotsLinux(sourcePath, outputDir)
 	default:
 		return fmt.Errorf("PPTX screenshots are not supported on %s", runtime.GOOS)
 	}
 }
 
-func markdownPPTXExportSlideScreenshotsWindows(sourcePath, outputDir string) error {
+func pptxExportSlideScreenshotsWindows(sourcePath, outputDir string) error {
 	scriptPath := filepath.Join(outputDir, "export_slides.ps1")
 	script := strings.TrimSpace(`
 param(
@@ -244,16 +289,32 @@ finally {
 	return nil
 }
 
-func markdownPPTXExportSlideScreenshotsLinux(sourcePath, outputDir string) error {
-	command, err := markdownPPTXResolveLibreOfficeCommand()
-	if err != nil {
-		return err
+func pptxExportSlideScreenshotsLinux(sourcePath, outputDir string) error {
+	command := ""
+	for _, name := range []string{"soffice", "libreoffice"} {
+		if _, err := exec.LookPath(name); err == nil {
+			command = name
+			break
+		}
+	}
+	if command == "" {
+		return fmt.Errorf("LibreOffice not found")
 	}
 
-	slideCount, err := markdownPPTXCountSlides(sourcePath)
+	reader, err := zip.OpenReader(sourcePath)
 	if err != nil {
 		return err
 	}
+	defer reader.Close()
+
+	var slideEntries []string
+	for _, file := range reader.File {
+		if strings.HasPrefix(file.Name, "ppt/slides/slide") && strings.HasSuffix(strings.ToLower(file.Name), ".xml") {
+			slideEntries = append(slideEntries, file.Name)
+		}
+	}
+	sort.Strings(slideEntries)
+	slideCount := len(slideEntries)
 	if slideCount == 0 {
 		return fmt.Errorf("no slides found in PPTX")
 	}
@@ -266,7 +327,10 @@ func markdownPPTXExportSlideScreenshotsLinux(sourcePath, outputDir string) error
 
 	baseName := strings.TrimSuffix(filepath.Base(sourcePath), filepath.Ext(sourcePath))
 	for page := 1; page <= slideCount; page++ {
-		filter := markdownPPTXBuildLibreOfficePngFilter(page)
+		filter := fmt.Sprintf(
+			`png:impress_png_Export:{"PixelWidth":{"type":"long","value":"1920"},"PixelHeight":{"type":"long","value":"1080"},"PageNumber":{"type":"long","value":"%d"}}`,
+			page,
+		)
 		cmd := exec.Command(
 			command,
 			"--headless",
@@ -284,161 +348,74 @@ func markdownPPTXExportSlideScreenshotsLinux(sourcePath, outputDir string) error
 			return fmt.Errorf("%s", message)
 		}
 
-		exportedPath, err := markdownPPTXFindLibreOfficeExportedPng(workDir, baseName)
+		entries, err := os.ReadDir(workDir)
 		if err != nil {
 			return err
+		}
+		exportedPath := ""
+		normalizedBaseName := strings.ToLower(strings.TrimSpace(baseName))
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if strings.ToLower(filepath.Ext(name)) != ".png" {
+				continue
+			}
+
+			stem := strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name)))
+			trimmedStem := pptxLibreOfficeSlideSuffixPattern.ReplaceAllString(stem, "")
+			if stem == normalizedBaseName || strings.TrimSpace(trimmedStem) == normalizedBaseName {
+				exportedPath = filepath.Join(workDir, name)
+				break
+			}
+		}
+		if exportedPath == "" {
+			return fmt.Errorf("LibreOffice did not create a PNG file for %s", baseName)
 		}
 
 		targetName := fmt.Sprintf("slide-%03d.png", page)
 		targetPath := filepath.Join(outputDir, targetName)
 		if err := os.Rename(exportedPath, targetPath); err != nil {
-			if err := markdownPPTXCopyFile(exportedPath, targetPath); err != nil {
+			in, err := os.Open(exportedPath)
+			if err != nil {
 				return err
 			}
-			_ = os.Remove(exportedPath)
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+				_ = in.Close()
+				return err
+			}
+
+			out, err := os.Create(targetPath)
+			if err != nil {
+				_ = in.Close()
+				return err
+			}
+
+			_, copyErr := out.ReadFrom(in)
+			syncErr := out.Sync()
+			closeOutErr := out.Close()
+			closeInErr := in.Close()
+			switch {
+			case copyErr != nil:
+				return copyErr
+			case syncErr != nil:
+				return syncErr
+			case closeOutErr != nil:
+				return closeOutErr
+			case closeInErr != nil:
+				return closeInErr
+			}
+			if err := os.Remove(exportedPath); err != nil {
+				return err
+			}
 		}
 	}
 
 	return nil
 }
 
-func markdownPPTXStateSlideLinks(doc *Markdown) []string {
-	var slideLinks []string
-	for name := range doc.extractedSlides {
-		if strings.ToLower(filepath.Ext(name)) != ".png" {
-			continue
-		}
-		slideLinks = append(slideLinks, filepath.ToSlash(filepath.Join("slides", name)))
-	}
-	sort.Strings(slideLinks)
-	return slideLinks
-}
-
-func markdownPPTXInjectSlideLinks(markdown string, slideLinks []string) string {
-	lines := strings.Split(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n")
-	var headingIdx []int
-	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "# ") {
-			headingIdx = append(headingIdx, i)
-		}
-	}
-	if len(headingIdx) == 0 {
-		var builder strings.Builder
-		builder.WriteString(strings.TrimRight(markdown, "\n"))
-		builder.WriteString("\n\n")
-		for _, link := range slideLinks {
-			builder.WriteString(fmt.Sprintf("[Slide screenshot](%s)\n\n", link))
-		}
-		return builder.String()
-	}
-
-	var out []string
-	linkPos := 0
-	for i, line := range lines {
-		out = append(out, line)
-		nextHeading := false
-		for _, idx := range headingIdx[1:] {
-			if i+1 == idx {
-				nextHeading = true
-				break
-			}
-		}
-		lastLine := i == len(lines)-1
-		if (nextHeading || lastLine) && linkPos < len(slideLinks) {
-			if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
-				out = append(out, "")
-			}
-			out = append(out, fmt.Sprintf("[Slide screenshot](%s)", slideLinks[linkPos]), "")
-			linkPos++
-		}
-	}
-	for ; linkPos < len(slideLinks); linkPos++ {
-		out = append(out, fmt.Sprintf("[Slide screenshot](%s)", slideLinks[linkPos]), "")
-	}
-	return strings.Join(out, "\n")
-}
-
-func markdownPPTXResolveLibreOfficeCommand() (string, error) {
-	for _, name := range []string{"soffice", "libreoffice"} {
-		if _, err := exec.LookPath(name); err == nil {
-			return name, nil
-		}
-	}
-	return "", fmt.Errorf("LibreOffice not found")
-}
-
-func markdownPPTXBuildLibreOfficePngFilter(pageNumber int) string {
-	return fmt.Sprintf(
-		`png:impress_png_Export:{"PixelWidth":{"type":"long","value":"1920"},"PixelHeight":{"type":"long","value":"1080"},"PageNumber":{"type":"long","value":"%d"}}`,
-		pageNumber,
-	)
-}
-
-func markdownPPTXFindLibreOfficeExportedPng(dir, baseName string) (string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", err
-	}
-
-	baseName = strings.ToLower(strings.TrimSpace(baseName))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if strings.ToLower(filepath.Ext(name)) != ".png" {
-			continue
-		}
-
-		stem := strings.ToLower(strings.TrimSuffix(name, filepath.Ext(name)))
-		trimmedStem := markdownPPTXLibreOfficeSlideSuffixPattern.ReplaceAllString(stem, "")
-		if stem == baseName || strings.TrimSpace(trimmedStem) == baseName {
-			return filepath.Join(dir, name), nil
-		}
-	}
-
-	return "", fmt.Errorf("LibreOffice did not create a PNG file for %s", baseName)
-}
-
-func markdownPPTXCountSlides(path string) (int, error) {
-	reader, err := zip.OpenReader(path)
-	if err != nil {
-		return 0, err
-	}
-	defer reader.Close()
-
-	var slideEntries []string
-	for _, file := range reader.File {
-		if strings.HasPrefix(file.Name, "ppt/slides/slide") && strings.HasSuffix(strings.ToLower(file.Name), ".xml") {
-			slideEntries = append(slideEntries, file.Name)
-		}
-	}
-	sort.Strings(slideEntries)
-	if len(slideEntries) > 0 {
-		return len(slideEntries), nil
-	}
-
-	return 0, fmt.Errorf("no PPTX slides found")
-}
-
-func markdownPPTXRunCommandInDir(dir string, logger func(string, ...any), command string, args ...string) error {
-	cmd := exec.Command(command, args...)
-	cmd.Dir = dir
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if logger != nil {
-		logger("Running: %s", strings.Join(cmd.Args, " "))
-	}
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return fmt.Errorf("%s", strings.TrimSpace(stderr.String()))
-		}
-		return err
-	}
-	return nil
-}
-
-func markdownPPTXCommandAvailable(commands ...string) error {
+func pptxCommandAvailable(commands ...string) error {
 	var lastErr error
 	for _, command := range commands {
 		if _, err := exec.LookPath(command); err == nil {
@@ -451,39 +428,4 @@ func markdownPPTXCommandAvailable(commands ...string) error {
 		return fmt.Errorf("no command configured")
 	}
 	return lastErr
-}
-
-func markdownPPTXEnsureDirs(dirs ...string) error {
-	for _, dir := range dirs {
-		if dir == "" {
-			continue
-		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func markdownPPTXCopyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	if err := markdownPPTXEnsureDirs(filepath.Dir(dst)); err != nil {
-		return err
-	}
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = out.Close() }()
-
-	if _, err := out.ReadFrom(in); err != nil {
-		return err
-	}
-	return out.Sync()
 }

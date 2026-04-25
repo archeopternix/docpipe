@@ -3,6 +3,7 @@ package docpipe
 import (
 	"archive/zip"
 	"bytes"
+	"crypto/rand"
 	"fmt"
 	stdio "io"
 	"os"
@@ -12,14 +13,10 @@ import (
 	"strings"
 )
 
-const markdownVersionMaxSuffix = 1000
-
 var (
-	markdownFilenamePattern    = regexp.MustCompile(`(?i)^(.*)_([a-z]{2})_v(\d+(?:\.\d+)*)$`)
-	versionPattern             = regexp.MustCompile(`^\d+(?:\.\d+)*$`)
-	datetimelayout             = "2006-01-02 15:04:05"
-	markdownVersionFilePattern = regexp.MustCompile(`(?i)^(.*)_([a-z]{2})_v(\d+(?:\.\d+)*)$`)
-	markdownVersionPattern     = regexp.MustCompile(`^\d+(?:\.\d+)*$`)
+	markdownFilenamePattern = regexp.MustCompile(`(?i)^(.*)_([a-z]{2})_v(\d+(?:\.\d+)*)$`)
+	versionPattern          = regexp.MustCompile(`^\d+(?:\.\d+)*$`)
+	datetimelayout          = "2006-01-02 15:04:05"
 )
 
 type Markdown struct {
@@ -82,7 +79,7 @@ func CreateFromZip(path string) (*Markdown, error) {
 
 	doc := NewDocuments()
 	doc.fileName = filepath.Base(path)
-	doc.metaData = *markdownMDDefaultMetaData(path)
+	doc.metaData = *mdDefaultMetaData(path)
 
 	for _, file := range reader.File {
 		if file.FileInfo().IsDir() {
@@ -122,7 +119,7 @@ func CreateFromZip(path string) (*Markdown, error) {
 		return nil, fmt.Errorf("zip does not contain a root markdown file")
 	}
 	if doc.metaData.Title == "" {
-		doc.metaData.Title = markdownMDBaseStem(doc.fileName)
+		doc.metaData.Title = mdBaseStem(doc.fileName)
 	}
 	if doc.metaData.Version == "" {
 		doc.metaData.Version = "1.0"
@@ -143,7 +140,11 @@ func (d *Markdown) SaveAsZip(path string) error {
 		return err
 	}
 
-	zipfile := filepath.Join(path, markdownZipFileName(d.GetMarkdownFileName()))
+	zipName, err := markdownZipFileName(d.GetMarkdownFileName())
+	if err != nil {
+		return err
+	}
+	zipfile := filepath.Join(path, zipName)
 	out, err := os.Create(zipfile)
 	if err != nil {
 		return err
@@ -204,7 +205,7 @@ func (d *Markdown) CreateZipBytes(writer *zip.Writer) error {
 }
 
 func (d Markdown) GetMarkdownFileName() string {
-	return markdownMDFileName(d.metaData)
+	return mdFileName(d.metaData)
 }
 
 func markdownZipReadFile(file *zip.File) ([]byte, error) {
@@ -242,8 +243,8 @@ func markdownZipIsRootMarkdown(name string) bool {
 
 func markdownZipApplyMarkdownMetaData(doc *Markdown, name string, body string) {
 	defaults := doc.metaData
-	defaults.Title = markdownMDBaseStem(name)
-	parts := markdownMDParseFileName(name)
+	defaults.Title = mdBaseStem(name)
+	parts := mdParseFileName(name)
 	if parts.Version != "" {
 		defaults.Version = parts.Version
 	}
@@ -251,10 +252,10 @@ func markdownZipApplyMarkdownMetaData(doc *Markdown, name string, body string) {
 		defaults.Language = parts.Language
 	}
 	if defaults.OriginalDocument == "" {
-		defaults.OriginalDocument = markdownMDNormalizeOriginalDocumentPath(name)
+		defaults.OriginalDocument = mdNormalizeOriginalDocumentPath(name)
 	}
 
-	if parsed, ok, err := markdownMDParseMetaData(body, defaults); err == nil && ok {
+	if parsed, ok, err := mdParseMetaData(body, defaults); err == nil && ok {
 		doc.metaData = parsed
 		return
 	}
@@ -288,13 +289,29 @@ func markdownSortedMapKeys[V any](values map[string]V) []string {
 	return keys
 }
 
-func markdownZipFileName(name string) string {
-	base := strings.TrimSpace(filepath.Base(name))
-	base = strings.TrimSuffix(base, filepath.Ext(base))
+func markdownZipFileName(name string) (string, error) {
+	base := strings.TrimSpace(mdBaseStem(name))
 	if base == "" {
 		base = "document"
 	}
-	return base + ".zip"
+
+	id, err := markdownUUID()
+	if err != nil {
+		return "", err
+	}
+	return id + "_" + base + ".zip", nil
+}
+
+func markdownUUID() (string, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", err
+	}
+
+	id[6] = (id[6] & 0x0f) | 0x40
+	id[8] = (id[8] & 0x3f) | 0x80
+
+	return fmt.Sprintf("%x-%x-%x-%x-%x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:]), nil
 }
 
 func markdownDocumentEntryName(originalDocument string) string {

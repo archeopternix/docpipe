@@ -17,18 +17,18 @@ import (
 )
 
 var (
-	markdownOfficeEscapedSpecialCharPattern = regexp.MustCompile(`\\([.,()\-:;!?&/\[\]{}#+=])`)
-	markdownOfficeHTMLFigurePattern         = regexp.MustCompile(`(?is)</?figure[^>]*>`)
-	markdownOfficeHTMLFigcaptionPattern     = regexp.MustCompile(`(?is)<figcaption[^>]*>.*?</figcaption>`)
-	markdownOfficeHTMLImagePattern          = regexp.MustCompile(`(?is)<img[^>]*src="([^"]+)"[^>]*alt="([^"]*)"[^>]*/?>`)
-	markdownOfficeImagePathPattern          = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
-	markdownOfficeTablePattern              = regexp.MustCompile(`(?is)<table\b[^>]*>.*?</table>`)
-	markdownOfficeScriptPattern             = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script>`)
-	markdownOfficeStylePattern              = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</style>`)
-	markdownOfficeTagPattern                = regexp.MustCompile(`(?is)<[^>]+>`)
+	officeEscapedSpecialCharPattern = regexp.MustCompile(`\\([.,()\-:;!?&/\[\]{}#+=])`)
+	officeHTMLFigurePattern         = regexp.MustCompile(`(?is)</?figure[^>]*>`)
+	officeHTMLFigcaptionPattern     = regexp.MustCompile(`(?is)<figcaption[^>]*>.*?</figcaption>`)
+	officeHTMLImagePattern          = regexp.MustCompile(`(?is)<img[^>]*src="([^"]+)"[^>]*alt="([^"]*)"[^>]*/?>`)
+	officeImagePathPattern          = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
+	officeTablePattern              = regexp.MustCompile(`(?is)<table\b[^>]*>.*?</table>`)
+	officeScriptPattern             = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script>`)
+	officeStylePattern              = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</style>`)
+	officeTagPattern                = regexp.MustCompile(`(?is)<[^>]+>`)
 )
 
-type markdownOfficeCoreProperties struct {
+type officeCoreProperties struct {
 	XMLName     xml.Name `xml:"coreProperties"`
 	Title       string   `xml:"title"`
 	Subject     string   `xml:"subject"`
@@ -37,6 +37,10 @@ type markdownOfficeCoreProperties struct {
 	Description string   `xml:"description"`
 	Language    string   `xml:"language"`
 	Revision    string   `xml:"revision"`
+}
+
+type WordParams struct {
+	IncludeImages bool
 }
 
 func CreateFromWord(path string, params *WordParams) (*Markdown, error) {
@@ -49,50 +53,20 @@ func CreateFromWord(path string, params *WordParams) (*Markdown, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
-	if markdownMDNormalizeExtension(filepath.Ext(path)) != ".docx" {
+	if mdNormalizeExtension(filepath.Ext(path)) != ".docx" {
 		return nil, fmt.Errorf("word conversion not supported for %q", filepath.Ext(path))
 	}
 
-	doc, err := markdownOfficeNewDocument(path)
+	doc, err := officeNewDocument(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := markdownDocxConvertToMarkdown(path, doc, params); err != nil {
-		return nil, err
-	}
-	doc.fileName = markdownMDZipFileName(markdownMDFileName(doc.metaData))
-
-	return doc, nil
-}
-
-func markdownOfficeNewDocument(path string) (*Markdown, error) {
-	original, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	doc := &Markdown{
-		originalFile:     bytes.NewBuffer(append([]byte(nil), original...)),
-		extractedImages:  make(map[string]*bytes.Buffer),
-		extractedSlides:  make(map[string]*bytes.Buffer),
-		markdownVersions: make(map[string]*bytes.Buffer),
-		metaData:         *markdownMDDefaultMetaData(path),
-	}
-
-	if err := markdownOfficeReadMetaData(path, &doc.metaData); err != nil {
-		return nil, err
-	}
-
-	return doc, nil
-}
-
-func markdownDocxConvertToMarkdown(path string, doc *Markdown, params *WordParams) error {
 	var mediaDir string
 	if params.IncludeImages {
 		var err error
 		mediaDir, err = os.MkdirTemp("", "docx-media-*")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		defer func() { _ = os.RemoveAll(mediaDir) }()
 	}
@@ -113,152 +87,248 @@ func markdownDocxConvertToMarkdown(path string, doc *Markdown, params *WordParam
 	body, err := cmd.Output()
 	if err != nil {
 		if stderr.Len() > 0 {
-			return fmt.Errorf("pandoc failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+			return nil, fmt.Errorf("pandoc failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 		}
-		return err
-	}
-
-	if params.IncludeImages {
-		files, err := markdownDocxCollectExtractedMediaFiles(mediaDir)
-		if err != nil {
-			return err
-		}
-		for name, content := range files {
-			doc.extractedImages[name] = bytes.NewBuffer(content)
-		}
-	}
-
-	doc.markdownFile = bytes.NewBufferString(markdownOfficeCleanupMarkdownContent(string(body)))
-	markdownMDApplyMetaDataFrontmatter(doc)
-
-	return nil
-}
-
-func markdownDocxCollectExtractedMediaFiles(mediaDir string) (map[string][]byte, error) {
-	files := map[string][]byte{}
-
-	if err := filepath.Walk(mediaDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info == nil || info.IsDir() {
-			return nil
-		}
-
-		relPath, err := filepath.Rel(mediaDir, path)
-		if err != nil {
-			return err
-		}
-		relPath = strings.TrimPrefix(filepath.ToSlash(relPath), "media/")
-
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		files[filepath.ToSlash(filepath.Join("media", relPath))] = body
-		return nil
-	}); err != nil {
 		return nil, err
 	}
 
-	return files, nil
+	if params.IncludeImages {
+		if err := filepath.Walk(mediaDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info == nil || info.IsDir() {
+				return nil
+			}
+
+			relPath, err := filepath.Rel(mediaDir, path)
+			if err != nil {
+				return err
+			}
+			relPath = strings.TrimPrefix(filepath.ToSlash(relPath), "media/")
+
+			body, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			doc.extractedImages[filepath.ToSlash(filepath.Join("media", relPath))] = bytes.NewBuffer(body)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+
+	doc.markdownFile = bytes.NewBufferString(officeCleanupMarkdownContent(string(body)))
+	mdApplyMetaDataFrontmatter(doc)
+	zipName := markdownZipFileName(mdFileName(doc.metaData))
+	if err != nil {
+		return nil, err
+	}
+	doc.fileName = zipName
+
+	return doc, nil
 }
 
-func markdownOfficeReadMetaData(path string, meta *MetaData) error {
+func officeNewDocument(path string) (*Markdown, error) {
+	original, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
 	reader, err := zip.OpenReader(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer reader.Close()
 
-	props, err := markdownOfficeReadCorePropertiesFromFiles(reader.File)
-	if err != nil {
-		return err
+	doc := &Markdown{
+		originalFile:     bytes.NewBuffer(append([]byte(nil), original...)),
+		extractedImages:  make(map[string]*bytes.Buffer),
+		extractedSlides:  make(map[string]*bytes.Buffer),
+		markdownVersions: make(map[string]*bytes.Buffer),
+		metaData:         *mdDefaultMetaData(path),
 	}
-	markdownOfficeApplyCoreProperties(meta, props)
-	return nil
-}
 
-func markdownOfficeReadCorePropertiesFromFiles(files []*zip.File) (markdownOfficeCoreProperties, error) {
-	for _, file := range files {
+	var props officeCoreProperties
+	for _, file := range reader.File {
 		if file.Name != "docProps/core.xml" {
 			continue
 		}
-		return markdownOfficeReadCoreProperties(file)
-	}
-	return markdownOfficeCoreProperties{}, nil
-}
 
-func markdownOfficeReadCoreProperties(file *zip.File) (markdownOfficeCoreProperties, error) {
-	var props markdownOfficeCoreProperties
-	rc, err := file.Open()
-	if err != nil {
-		return props, err
+		rc, err := file.Open()
+		if err != nil {
+			return nil, err
+		}
+		decoder := xml.NewDecoder(rc)
+		decodeErr := decoder.Decode(&props)
+		closeErr := rc.Close()
+		if decodeErr != nil && decodeErr != stdio.EOF {
+			return nil, decodeErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		break
 	}
-	defer rc.Close()
 
-	decoder := xml.NewDecoder(rc)
-	if err := decoder.Decode(&props); err != nil && err != stdio.EOF {
-		return props, err
-	}
-	return props, nil
-}
-
-func markdownOfficeApplyCoreProperties(meta *MetaData, props markdownOfficeCoreProperties) {
-	if meta == nil {
-		return
-	}
 	if author := strings.TrimSpace(props.Creator); author != "" {
-		meta.Author = author
+		doc.metaData.Author = author
 	}
 	if title := strings.TrimSpace(props.Title); title != "" {
-		meta.Title = title
+		doc.metaData.Title = title
 	}
-	if meta.Version == "" {
-		meta.Version = markdownMDNormalizeVersion(props.Revision)
+	if doc.metaData.Version == "" {
+		doc.metaData.Version = mdNormalizeVersion(props.Revision)
 	}
-	if meta.Language == "" {
-		meta.Language = markdownMDNormalizeLanguageCode(props.Language)
+	if doc.metaData.Language == "" {
+		doc.metaData.Language = mdNormalizeLanguageCode(props.Language)
 	}
 
 	description := strings.TrimSpace(props.Description)
 	if description != "" {
-		meta.Abstract = description
+		doc.metaData.Abstract = description
 	} else {
-		meta.Abstract = strings.TrimSpace(props.Subject)
+		doc.metaData.Abstract = strings.TrimSpace(props.Subject)
 	}
-	meta.Keywords = markdownMDNormalizeKeywords(props.Keywords)
+	doc.metaData.Keywords = mdNormalizeKeywords(props.Keywords)
+
+	return doc, nil
 }
 
-func markdownOfficeCleanupMarkdownContent(input string) string {
-	text := markdownOfficeNormalizeNewlines(input)
-	text = markdownOfficeHTMLFigcaptionPattern.ReplaceAllString(text, "")
-	text = markdownOfficeHTMLFigurePattern.ReplaceAllString(text, "")
-	text = markdownOfficeConvertHTMLTables(text)
-	text = markdownOfficeHTMLImagePattern.ReplaceAllStringFunc(text, func(match string) string {
-		parts := markdownOfficeHTMLImagePattern.FindStringSubmatch(match)
+func officeCleanupMarkdownContent(input string) string {
+	text := strings.ReplaceAll(strings.ReplaceAll(input, "\r\n", "\n"), "\r", "\n")
+	text = officeHTMLFigcaptionPattern.ReplaceAllString(text, "")
+	text = officeHTMLFigurePattern.ReplaceAllString(text, "")
+	matches := officeTablePattern.FindAllStringIndex(text, -1)
+	if len(matches) > 0 {
+		var out bytes.Buffer
+		last := 0
+		for _, match := range matches {
+			out.WriteString(text[last:match[0]])
+			tableHTML := text[match[0]:match[1]]
+
+			markdownTable := ""
+			ok := false
+			htmlDoc, err := html.Parse(strings.NewReader(tableHTML))
+			if err == nil {
+				table := officeHTMLFindFirst(htmlDoc, "table")
+				if table != nil && !officeHTMLTableHasSpanAttrs(table) {
+					rows := officeHTMLFindAll(officeHTMLFindFirst(table, "thead"), "tr")
+					rows = append(rows, officeHTMLFindAll(officeHTMLFindFirst(table, "tbody"), "tr")...)
+					if len(rows) == 0 {
+						rows = officeHTMLFindAll(table, "tr")
+					}
+					if len(rows) > 0 {
+						headerCells := officeHTMLExtractCells(rows[0])
+						if len(headerCells) > 0 {
+							colCount := len(headerCells)
+							hasTH := false
+							for c := rows[0].FirstChild; c != nil; c = c.NextSibling {
+								if c.Type == html.ElementNode && strings.EqualFold(c.Data, "th") {
+									hasTH = true
+									break
+								}
+							}
+							header := make([]string, 0, colCount)
+							for _, cell := range headerCells {
+								header = append(header, officeHTMLCellText(cell))
+							}
+
+							bodyStart := 1
+							if !hasTH {
+								header = make([]string, colCount)
+								for i := range header {
+									header[i] = fmt.Sprintf("Col%d", i+1)
+								}
+								bodyStart = 0
+							}
+
+							var builder strings.Builder
+							builder.WriteString(officeRenderMarkdownRow(header))
+							builder.WriteString("\n")
+							if colCount <= 0 {
+								builder.WriteString("| --- |")
+							} else {
+								parts := make([]string, colCount)
+								for i := range parts {
+									parts[i] = "---"
+								}
+								builder.WriteString("| " + strings.Join(parts, " | ") + " |")
+							}
+							builder.WriteString("\n")
+
+							rowCount := 0
+							for i := bodyStart; i < len(rows); i++ {
+								cells := officeHTMLExtractCells(rows[i])
+								if len(cells) == 0 {
+									continue
+								}
+								row := make([]string, colCount)
+								for j := 0; j < colCount; j++ {
+									if j < len(cells) {
+										row[j] = officeHTMLCellText(cells[j])
+									}
+								}
+								builder.WriteString(officeRenderMarkdownRow(row))
+								builder.WriteString("\n")
+								rowCount++
+							}
+
+							if rowCount == 0 && hasTH {
+								values := make([]string, colCount)
+								for i, cell := range headerCells {
+									full := officeHTMLCellText(cell)
+									prefix := strings.TrimSpace(header[i]) + " "
+									values[i] = strings.TrimSpace(strings.TrimPrefix(full, prefix))
+								}
+								builder.WriteString(officeRenderMarkdownRow(values))
+								builder.WriteString("\n")
+							}
+
+							markdownTable = builder.String()
+							ok = true
+						}
+					}
+				}
+			}
+
+			if ok {
+				out.WriteString(markdownTable)
+			} else {
+				out.WriteString(tableHTML)
+			}
+			last = match[1]
+		}
+		out.WriteString(text[last:])
+		text = out.String()
+	}
+	text = officeHTMLImagePattern.ReplaceAllStringFunc(text, func(match string) string {
+		parts := officeHTMLImagePattern.FindStringSubmatch(match)
 		if len(parts) < 3 {
 			return match
 		}
-		return "![" + strings.TrimSpace(parts[2]) + "](" + markdownOfficeCleanupNormalizeMediaPath(parts[1]) + ")"
+		return "![" + strings.TrimSpace(parts[2]) + "](" + officeCleanupNormalizeMediaPath(parts[1]) + ")"
 	})
-	text = markdownOfficeImagePathPattern.ReplaceAllStringFunc(text, func(match string) string {
-		parts := markdownOfficeImagePathPattern.FindStringSubmatch(match)
+	text = officeImagePathPattern.ReplaceAllStringFunc(text, func(match string) string {
+		parts := officeImagePathPattern.FindStringSubmatch(match)
 		if len(parts) < 3 {
 			return match
 		}
-		return "![" + parts[1] + "](" + markdownOfficeCleanupNormalizeMediaPath(parts[2]) + ")"
+		return "![" + parts[1] + "](" + officeCleanupNormalizeMediaPath(parts[2]) + ")"
 	})
-	text = markdownOfficeCleanupStripHTML(text)
-	return markdownOfficeEscapedSpecialCharPattern.ReplaceAllString(text, "$1")
+	text = officeScriptPattern.ReplaceAllString(text, "")
+	text = officeStylePattern.ReplaceAllString(text, "")
+	text = officeTagPattern.ReplaceAllString(text, "")
+	text = strings.ReplaceAll(text, "&nbsp;", " ")
+	text = strings.ReplaceAll(text, "&amp;", "&")
+	text = strings.ReplaceAll(text, "&lt;", "<")
+	text = strings.ReplaceAll(text, "&gt;", ">")
+	text = strings.ReplaceAll(text, "&quot;", `"`)
+	text = strings.ReplaceAll(text, "&#39;", "'")
+	return officeEscapedSpecialCharPattern.ReplaceAllString(text, "$1")
 }
 
-func markdownOfficeNormalizeNewlines(input string) string {
-	input = strings.ReplaceAll(input, "\r\n", "\n")
-	return strings.ReplaceAll(input, "\r", "\n")
-}
-
-func markdownOfficeCleanupNormalizeMediaPath(pathValue string) string {
+func officeCleanupNormalizeMediaPath(pathValue string) string {
 	pathValue = strings.TrimSpace(strings.Trim(pathValue, `"'`))
 	pathValue = strings.ReplaceAll(pathValue, "%5C", "/")
 	pathValue = strings.ReplaceAll(pathValue, "%5c", "/")
@@ -272,7 +342,32 @@ func markdownOfficeCleanupNormalizeMediaPath(pathValue string) string {
 		if segment == "" {
 			continue
 		}
-		last = markdownOfficeCleanupSanitizeMediaSegment(segment)
+		var builder strings.Builder
+		lastUnderscore := false
+		for _, r := range segment {
+			switch {
+			case r > unicode.MaxASCII || unicode.IsSpace(r):
+				if !lastUnderscore {
+					builder.WriteByte('_')
+					lastUnderscore = true
+				}
+			case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
+				builder.WriteRune(r)
+				lastUnderscore = false
+			case strings.ContainsRune("._-", r):
+				builder.WriteRune(r)
+				lastUnderscore = false
+			default:
+				if !lastUnderscore {
+					builder.WriteByte('_')
+					lastUnderscore = true
+				}
+			}
+		}
+		last = strings.Trim(builder.String(), "_")
+		if last == "" {
+			last = "file"
+		}
 	}
 	if last == "" {
 		last = "image"
@@ -280,149 +375,7 @@ func markdownOfficeCleanupNormalizeMediaPath(pathValue string) string {
 	return "/media/" + last
 }
 
-func markdownOfficeCleanupSanitizeMediaSegment(segment string) string {
-	var builder strings.Builder
-	lastUnderscore := false
-	for _, r := range segment {
-		switch {
-		case r > unicode.MaxASCII || unicode.IsSpace(r):
-			if !lastUnderscore {
-				builder.WriteByte('_')
-				lastUnderscore = true
-			}
-		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
-			builder.WriteRune(r)
-			lastUnderscore = false
-		case strings.ContainsRune("._-", r):
-			builder.WriteRune(r)
-			lastUnderscore = false
-		default:
-			if !lastUnderscore {
-				builder.WriteByte('_')
-				lastUnderscore = true
-			}
-		}
-	}
-	sanitized := strings.Trim(builder.String(), "_")
-	if sanitized == "" {
-		return "file"
-	}
-	return sanitized
-}
-
-func markdownOfficeConvertHTMLTables(input string) string {
-	matches := markdownOfficeTablePattern.FindAllStringIndex(input, -1)
-	if len(matches) == 0 {
-		return input
-	}
-
-	var out bytes.Buffer
-	last := 0
-	for _, match := range matches {
-		out.WriteString(input[last:match[0]])
-		tableHTML := input[match[0]:match[1]]
-		if markdownTable, ok := markdownOfficeTableHTMLToMarkdown(tableHTML); ok {
-			out.WriteString(markdownTable)
-		} else {
-			out.WriteString(tableHTML)
-		}
-		last = match[1]
-	}
-	out.WriteString(input[last:])
-	return out.String()
-}
-
-func markdownOfficeTableHTMLToMarkdown(tableHTML string) (string, bool) {
-	doc, err := html.Parse(strings.NewReader(tableHTML))
-	if err != nil {
-		return "", false
-	}
-	table := markdownOfficeHTMLFindFirst(doc, "table")
-	if table == nil || markdownOfficeHTMLTableHasSpanAttrs(table) {
-		return "", false
-	}
-
-	rows := markdownOfficeHTMLFindAll(markdownOfficeHTMLFindFirst(table, "thead"), "tr")
-	rows = append(rows, markdownOfficeHTMLFindAll(markdownOfficeHTMLFindFirst(table, "tbody"), "tr")...)
-	if len(rows) == 0 {
-		rows = markdownOfficeHTMLFindAll(table, "tr")
-	}
-	if len(rows) == 0 {
-		return "", false
-	}
-
-	headerCells := markdownOfficeHTMLExtractCells(rows[0])
-	if len(headerCells) == 0 {
-		return "", false
-	}
-
-	colCount := len(headerCells)
-	hasTH := markdownOfficeHTMLRowHasTH(rows[0])
-	header := make([]string, 0, colCount)
-	for _, cell := range headerCells {
-		header = append(header, markdownOfficeHTMLCellText(cell))
-	}
-
-	bodyStart := 1
-	if !hasTH {
-		header = make([]string, colCount)
-		for i := range header {
-			header[i] = "Col" + markdownOfficeIntString(i+1)
-		}
-		bodyStart = 0
-	}
-
-	var builder strings.Builder
-	builder.WriteString(markdownOfficeRenderMarkdownRow(header))
-	builder.WriteString("\n")
-	builder.WriteString(markdownOfficeRenderMarkdownSeparator(colCount))
-	builder.WriteString("\n")
-
-	rowCount := 0
-	for i := bodyStart; i < len(rows); i++ {
-		cells := markdownOfficeHTMLExtractCells(rows[i])
-		if len(cells) == 0 {
-			continue
-		}
-		row := make([]string, colCount)
-		for j := 0; j < colCount; j++ {
-			if j < len(cells) {
-				row[j] = markdownOfficeHTMLCellText(cells[j])
-			}
-		}
-		builder.WriteString(markdownOfficeRenderMarkdownRow(row))
-		builder.WriteString("\n")
-		rowCount++
-	}
-
-	if rowCount == 0 && hasTH {
-		values := make([]string, colCount)
-		for i, cell := range headerCells {
-			full := markdownOfficeHTMLCellText(cell)
-			prefix := strings.TrimSpace(header[i]) + " "
-			values[i] = strings.TrimSpace(strings.TrimPrefix(full, prefix))
-		}
-		builder.WriteString(markdownOfficeRenderMarkdownRow(values))
-		builder.WriteString("\n")
-	}
-
-	return builder.String(), true
-}
-
-func markdownOfficeCleanupStripHTML(input string) string {
-	text := markdownOfficeScriptPattern.ReplaceAllString(input, "")
-	text = markdownOfficeStylePattern.ReplaceAllString(text, "")
-	text = markdownOfficeTagPattern.ReplaceAllString(text, "")
-	text = strings.ReplaceAll(text, "&nbsp;", " ")
-	text = strings.ReplaceAll(text, "&amp;", "&")
-	text = strings.ReplaceAll(text, "&lt;", "<")
-	text = strings.ReplaceAll(text, "&gt;", ">")
-	text = strings.ReplaceAll(text, "&quot;", `"`)
-	text = strings.ReplaceAll(text, "&#39;", "'")
-	return text
-}
-
-func markdownOfficeHTMLFindFirst(n *html.Node, tag string) *html.Node {
+func officeHTMLFindFirst(n *html.Node, tag string) *html.Node {
 	if n == nil {
 		return nil
 	}
@@ -430,14 +383,14 @@ func markdownOfficeHTMLFindFirst(n *html.Node, tag string) *html.Node {
 		return n
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if found := markdownOfficeHTMLFindFirst(c, tag); found != nil {
+		if found := officeHTMLFindFirst(c, tag); found != nil {
 			return found
 		}
 	}
 	return nil
 }
 
-func markdownOfficeHTMLFindAll(n *html.Node, tag string) []*html.Node {
+func officeHTMLFindAll(n *html.Node, tag string) []*html.Node {
 	if n == nil {
 		return nil
 	}
@@ -458,7 +411,7 @@ func markdownOfficeHTMLFindAll(n *html.Node, tag string) []*html.Node {
 	return nodes
 }
 
-func markdownOfficeHTMLTableHasSpanAttrs(n *html.Node) bool {
+func officeHTMLTableHasSpanAttrs(n *html.Node) bool {
 	if n == nil {
 		return false
 	}
@@ -471,14 +424,14 @@ func markdownOfficeHTMLTableHasSpanAttrs(n *html.Node) bool {
 		}
 	}
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if markdownOfficeHTMLTableHasSpanAttrs(c) {
+		if officeHTMLTableHasSpanAttrs(c) {
 			return true
 		}
 	}
 	return false
 }
 
-func markdownOfficeHTMLExtractCells(tr *html.Node) []*html.Node {
+func officeHTMLExtractCells(tr *html.Node) []*html.Node {
 	var cells []*html.Node
 	if tr == nil {
 		return cells
@@ -491,19 +444,7 @@ func markdownOfficeHTMLExtractCells(tr *html.Node) []*html.Node {
 	return cells
 }
 
-func markdownOfficeHTMLRowHasTH(tr *html.Node) bool {
-	if tr == nil {
-		return false
-	}
-	for c := tr.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type == html.ElementNode && strings.EqualFold(c.Data, "th") {
-			return true
-		}
-	}
-	return false
-}
-
-func markdownOfficeHTMLCellText(cell *html.Node) string {
+func officeHTMLCellText(cell *html.Node) string {
 	if cell == nil {
 		return ""
 	}
@@ -535,36 +476,11 @@ func markdownOfficeHTMLCellText(cell *html.Node) string {
 	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
 }
 
-func markdownOfficeRenderMarkdownRow(cells []string) string {
+func officeRenderMarkdownRow(cells []string) string {
 	escaped := make([]string, len(cells))
 	for i, cell := range cells {
 		cell = strings.ReplaceAll(cell, "|", `\|`)
 		escaped[i] = strings.TrimSpace(cell)
 	}
 	return "| " + strings.Join(escaped, " | ") + " |"
-}
-
-func markdownOfficeRenderMarkdownSeparator(n int) string {
-	if n <= 0 {
-		return "| --- |"
-	}
-	parts := make([]string, n)
-	for i := range parts {
-		parts[i] = "---"
-	}
-	return "| " + strings.Join(parts, " | ") + " |"
-}
-
-func markdownOfficeIntString(v int) string {
-	if v == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for v > 0 {
-		i--
-		buf[i] = byte('0' + (v % 10))
-		v /= 10
-	}
-	return string(buf[i:])
 }

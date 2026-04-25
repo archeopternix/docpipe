@@ -13,19 +13,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type markdownMDFileNameParts struct {
+type mdFileNameParts struct {
 	BaseStem string
 	Language string
 	Version  string
-	Matched  bool
 }
 
 func CreateFromMarkdown(path string) (*Markdown, error) {
-	if _, err := os.Stat(path); err != nil {
+	info, err := os.Stat(path)
+	if err != nil {
 		return nil, err
 	}
 
-	switch markdownMDNormalizeExtension(filepath.Ext(path)) {
+	switch mdNormalizeExtension(filepath.Ext(path)) {
 	case ".md", ".markdown":
 	default:
 		return nil, fmt.Errorf("markdown conversion not supported for %q", filepath.Ext(path))
@@ -36,64 +36,14 @@ func CreateFromMarkdown(path string) (*Markdown, error) {
 		return nil, err
 	}
 
-	doc := &Markdown{
-		originalFile:     bytes.NewBuffer(append([]byte(nil), body...)),
-		markdownFile:     bytes.NewBuffer(append([]byte(nil), body...)),
-		extractedImages:  make(map[string]*bytes.Buffer),
-		extractedSlides:  make(map[string]*bytes.Buffer),
-		markdownVersions: make(map[string]*bytes.Buffer),
-		metaData:         *markdownMDDefaultMetaData(path),
-	}
-
-	if err := markdownMDReadMetaData(path, &doc.metaData); err != nil {
+	meta := *mdDefaultMetaData(path)
+	if parsed, ok, err := mdParseMetaData(string(body), meta); err != nil {
 		return nil, err
-	}
-	if doc.metaData.Version == "" {
-		doc.metaData.Version = "1.0"
-	}
-
-	markdownMDApplyMetaDataFrontmatter(doc)
-	doc.fileName = markdownMDZipFileName(markdownMDFileName(doc.metaData))
-
-	return doc, nil
-}
-
-func markdownMDDefaultMetaData(path string) *MetaData {
-	meta := MetaData{
-		Title:            markdownMDBaseStem(path),
-		OriginalDocument: markdownMDNormalizeOriginalDocumentPath(path),
-		OriginalFormat:   strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
-		Date:             markdownMDFileCreatedDate(path),
-		ChangedDate:      markdownMDFileModifiedDate(path),
-		Version:          markdownMDParseVersionFromFile(path),
-		Language:         markdownMDParseLanguageFromFile(path),
-	}
-	if meta.OriginalFormat == "md" || meta.OriginalFormat == "markdown" {
-		parts := markdownMDParseFileName(path)
-		meta.Version = parts.Version
-		meta.Language = parts.Language
-	}
-	return &meta
-}
-
-func markdownMDReadMetaData(path string, meta *MetaData) error {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-
-	if parsed, ok, err := markdownMDParseMetaData(string(body), *meta); err != nil {
-		return err
 	} else if ok {
-		*meta = parsed
+		meta = parsed
 	}
-
 	if meta.Title == "" {
-		meta.Title = markdownMDBaseStem(path)
+		meta.Title = mdBaseStem(path)
 	}
 	if meta.Date == "" {
 		meta.Date = info.ModTime().Format("2006-01-02")
@@ -101,15 +51,56 @@ func markdownMDReadMetaData(path string, meta *MetaData) error {
 	if meta.ChangedDate == "" {
 		meta.ChangedDate = info.ModTime().Format("2006-01-02")
 	}
+	if meta.Version == "" {
+		meta.Version = "1.0"
+	}
 
-	return nil
+	doc := &Markdown{
+		originalFile:     bytes.NewBuffer(append([]byte(nil), body...)),
+		markdownFile:     bytes.NewBuffer(append([]byte(nil), body...)),
+		extractedImages:  make(map[string]*bytes.Buffer),
+		extractedSlides:  make(map[string]*bytes.Buffer),
+		markdownVersions: make(map[string]*bytes.Buffer),
+		metaData:         meta,
+	}
+
+	mdApplyMetaDataFrontmatter(doc)
+	zipName := markdownZipFileName(mdFileName(doc.metaData))
+	if err != nil {
+		return nil, err
+	}
+	doc.fileName = zipName
+
+	return doc, nil
 }
 
-func markdownMDParseMetaData(body string, defaults MetaData) (MetaData, bool, error) {
-	frontmatter, ok := markdownMDExtractLeadingFrontmatter(markdownMDNormalizeFrontmatterNewlines(body))
-	if !ok {
+func mdDefaultMetaData(path string) *MetaData {
+	createdDate, _ := filetime.Formatted(path, "created", time.RFC3339)
+	modifiedDate, _ := filetime.Formatted(path, "modified", time.RFC3339)
+	parts := mdParseFileName(path)
+
+	meta := MetaData{
+		Title:            mdBaseStem(path),
+		OriginalDocument: mdNormalizeOriginalDocumentPath(path),
+		OriginalFormat:   strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
+		Date:             createdDate,
+		ChangedDate:      modifiedDate,
+		Version:          parts.Version,
+		Language:         parts.Language,
+	}
+	return &meta
+}
+
+func mdParseMetaData(body string, defaults MetaData) (MetaData, bool, error) {
+	body = strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n")
+	if !strings.HasPrefix(body, "---\n") {
 		return defaults, false, nil
 	}
+	end := strings.Index(body[4:], "\n---\n")
+	if end < 0 {
+		return defaults, false, nil
+	}
+	frontmatter := body[4 : end+4]
 
 	var raw map[string]any
 	if err := yaml.Unmarshal([]byte(frontmatter), &raw); err != nil {
@@ -117,22 +108,22 @@ func markdownMDParseMetaData(body string, defaults MetaData) (MetaData, bool, er
 	}
 
 	meta := defaults
-	meta.Author = markdownMDReadStringField(raw, "author")
-	meta.Title = markdownMDReadStringField(raw, "title")
-	meta.Subtitle = markdownMDReadStringField(raw, "subtitle")
-	meta.Date = markdownMDFirstNonEmpty(markdownMDReadStringField(raw, "date"), markdownMDReadStringField(raw, "created_date"), defaults.Date)
-	meta.ChangedDate = markdownMDFirstNonEmpty(markdownMDReadStringField(raw, "changed_date"), defaults.ChangedDate)
-	meta.OriginalDocument = markdownMDFirstNonEmpty(markdownMDReadStringField(raw, "original_document"), defaults.OriginalDocument)
-	meta.OriginalFormat = markdownMDFirstNonEmpty(markdownMDReadStringField(raw, "original_format"), defaults.OriginalFormat)
-	meta.Version = markdownMDFirstNonEmpty(defaults.Version, markdownMDNormalizeVersion(markdownMDReadStringField(raw, "version")))
-	meta.Language = markdownMDFirstNonEmpty(defaults.Language, markdownMDNormalizeLanguageCode(markdownMDReadStringField(raw, "language")), markdownMDNormalizeLanguageCode(markdownMDReadStringField(raw, "lang")))
-	meta.Abstract = markdownMDReadStringField(raw, "abstract")
-	meta.Keywords = markdownMDReadKeywordsField(raw["keywords"])
+	meta.Author = mdReadStringField(raw, "author")
+	meta.Title = mdReadStringField(raw, "title")
+	meta.Subtitle = mdReadStringField(raw, "subtitle")
+	meta.Date = mdFirstNonEmpty(mdReadStringField(raw, "date"), mdReadStringField(raw, "created_date"), defaults.Date)
+	meta.ChangedDate = mdFirstNonEmpty(mdReadStringField(raw, "changed_date"), defaults.ChangedDate)
+	meta.OriginalDocument = mdFirstNonEmpty(mdReadStringField(raw, "original_document"), defaults.OriginalDocument)
+	meta.OriginalFormat = mdFirstNonEmpty(mdReadStringField(raw, "original_format"), defaults.OriginalFormat)
+	meta.Version = mdFirstNonEmpty(defaults.Version, mdNormalizeVersion(mdReadStringField(raw, "version")))
+	meta.Language = mdFirstNonEmpty(defaults.Language, mdNormalizeLanguageCode(mdReadStringField(raw, "language")), mdNormalizeLanguageCode(mdReadStringField(raw, "lang")))
+	meta.Abstract = mdReadStringField(raw, "abstract")
+	meta.Keywords = mdNormalizeKeywords(raw["keywords"])
 
 	return meta, true, nil
 }
 
-func markdownMDApplyMetaDataFrontmatter(doc *Markdown) {
+func mdApplyMetaDataFrontmatter(doc *Markdown) {
 	if doc == nil {
 		return
 	}
@@ -141,21 +132,30 @@ func markdownMDApplyMetaDataFrontmatter(doc *Markdown) {
 	if doc.markdownFile != nil {
 		body = doc.markdownFile.String()
 	}
-	body = strings.TrimLeft(markdownMDStripLeadingFrontmatter(markdownMDNormalizeFrontmatterNewlines(body)), "\n")
+	body = strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n")
+	if strings.HasPrefix(body, "---\n") {
+		if end := strings.Index(body[4:], "\n---\n"); end >= 0 {
+			body = body[end+9:]
+		}
+	}
+	body = strings.TrimLeft(body, "\n")
 
 	var builder strings.Builder
 	builder.WriteString("---\n")
-	markdownMDWriteFrontmatterString(&builder, "title", doc.metaData.Title)
-	markdownMDWriteFrontmatterString(&builder, "subtitle", doc.metaData.Subtitle)
-	markdownMDWriteFrontmatterString(&builder, "date", markdownMDFormatFrontmatterDate(doc.metaData.Date))
-	markdownMDWriteFrontmatterString(&builder, "changed_date", markdownMDFormatFrontmatterDate(doc.metaData.ChangedDate))
-	markdownMDWriteFrontmatterString(&builder, "original_document", markdownMDNormalizeOriginalDocumentPath(doc.metaData.OriginalDocument))
-	markdownMDWriteFrontmatterString(&builder, "original_format", doc.metaData.OriginalFormat)
-	markdownMDWriteFrontmatterString(&builder, "version", doc.metaData.Version)
-	markdownMDWriteFrontmatterString(&builder, "language", doc.metaData.Language)
-	markdownMDWriteFrontmatterString(&builder, "abstract", doc.metaData.Abstract)
-	markdownMDWriteFrontmatterKeywords(&builder, doc.metaData.Keywords)
-	markdownMDWriteFrontmatterString(&builder, "author", doc.metaData.Author)
+	builder.WriteString(fmt.Sprintf("%s: %q\n", "title", doc.metaData.Title))
+	builder.WriteString(fmt.Sprintf("%s: %q\n", "subtitle", doc.metaData.Subtitle))
+	builder.WriteString(fmt.Sprintf("%s: %q\n", "date", mdFormatFrontmatterDate(doc.metaData.Date)))
+	builder.WriteString(fmt.Sprintf("%s: %q\n", "changed_date", mdFormatFrontmatterDate(doc.metaData.ChangedDate)))
+	builder.WriteString(fmt.Sprintf("%s: %q\n", "original_document", mdNormalizeOriginalDocumentPath(doc.metaData.OriginalDocument)))
+	builder.WriteString(fmt.Sprintf("%s: %q\n", "original_format", doc.metaData.OriginalFormat))
+	builder.WriteString(fmt.Sprintf("%s: %q\n", "version", doc.metaData.Version))
+	builder.WriteString(fmt.Sprintf("%s: %q\n", "language", doc.metaData.Language))
+	builder.WriteString(fmt.Sprintf("%s: %q\n", "abstract", doc.metaData.Abstract))
+	builder.WriteString("keywords:\n")
+	for _, keyword := range mdNormalizeKeywords(doc.metaData.Keywords) {
+		builder.WriteString(fmt.Sprintf("  - %q\n", keyword))
+	}
+	builder.WriteString(fmt.Sprintf("%s: %q\n", "author", doc.metaData.Author))
 	builder.WriteString("---\n\n")
 	builder.WriteString(strings.TrimRight(body, "\n"))
 	builder.WriteString("\n")
@@ -163,34 +163,33 @@ func markdownMDApplyMetaDataFrontmatter(doc *Markdown) {
 	doc.markdownFile = bytes.NewBufferString(builder.String())
 }
 
-func markdownMDParseFileName(name string) markdownMDFileNameParts {
+func mdParseFileName(name string) mdFileNameParts {
 	stem := strings.TrimSpace(strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)))
 	if stem == "" {
-		return markdownMDFileNameParts{}
+		return mdFileNameParts{}
 	}
 
 	matches := markdownFilenamePattern.FindStringSubmatch(stem)
 	if len(matches) != 4 {
-		return markdownMDFileNameParts{BaseStem: stem}
+		return mdFileNameParts{BaseStem: stem}
 	}
 
-	return markdownMDFileNameParts{
+	return mdFileNameParts{
 		BaseStem: strings.TrimSpace(matches[1]),
-		Language: markdownMDNormalizeLanguageCode(matches[2]),
-		Version:  markdownMDNormalizeVersion(matches[3]),
-		Matched:  true,
+		Language: mdNormalizeLanguageCode(matches[2]),
+		Version:  mdNormalizeVersion(matches[3]),
 	}
 }
 
-func markdownMDBaseStem(name string) string {
-	parts := markdownMDParseFileName(name)
+func mdBaseStem(name string) string {
+	parts := mdParseFileName(name)
 	if strings.TrimSpace(parts.BaseStem) != "" {
 		return parts.BaseStem
 	}
 	return strings.TrimSpace(strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)))
 }
 
-func markdownMDNormalizeExtension(ext string) string {
+func mdNormalizeExtension(ext string) string {
 	if ext == "" {
 		return ""
 	}
@@ -201,7 +200,7 @@ func markdownMDNormalizeExtension(ext string) string {
 	return normalized
 }
 
-func markdownMDNormalizeOriginalDocumentPath(path string) string {
+func mdNormalizeOriginalDocumentPath(path string) string {
 	name := strings.TrimSpace(filepath.Base(path))
 	if name == "" || name == "." {
 		return "document/"
@@ -209,10 +208,10 @@ func markdownMDNormalizeOriginalDocumentPath(path string) string {
 	return filepath.ToSlash(filepath.Join("document", name))
 }
 
-func markdownMDNormalizeLanguageCode(value string) string {
+func mdNormalizeLanguageCode(value string) string {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	if normalized == "" {
-		return ""
+		return "xx"
 	}
 
 	switch normalized {
@@ -227,17 +226,17 @@ func markdownMDNormalizeLanguageCode(value string) string {
 		normalized = normalized[:idx]
 	}
 	if len(normalized) != 2 {
-		return ""
+		return "xx"
 	}
 	for _, r := range normalized {
 		if r < 'a' || r > 'z' {
-			return ""
+			return "xx"
 		}
 	}
 	return normalized
 }
 
-func markdownMDNormalizeVersion(value string) string {
+func mdNormalizeVersion(value string) string {
 	normalized := strings.TrimSpace(value)
 	normalized = strings.TrimPrefix(strings.TrimPrefix(normalized, "v"), "V")
 	if !versionPattern.MatchString(normalized) {
@@ -246,102 +245,7 @@ func markdownMDNormalizeVersion(value string) string {
 	return normalized
 }
 
-func markdownMDNormalizeMarkdownVersion(value string) string {
-	normalized := strings.TrimSpace(value)
-	normalized = strings.TrimPrefix(strings.TrimPrefix(normalized, "v"), "V")
-	if !markdownVersionPattern.MatchString(normalized) {
-		return ""
-	}
-	return normalized
-}
-
-func markdownMDNormalizeVersionLanguage(value string) string {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	if normalized == "" {
-		return "en"
-	}
-
-	switch normalized {
-	case "english":
-		return "en"
-	case "german", "deutsch":
-		return "de"
-	}
-
-	normalized = strings.ReplaceAll(normalized, "_", "-")
-	if idx := strings.IndexByte(normalized, '-'); idx >= 0 {
-		normalized = normalized[:idx]
-	}
-	if len(normalized) > 2 {
-		normalized = normalized[:2]
-	}
-	if len(normalized) != 2 {
-		return "en"
-	}
-	for _, r := range normalized {
-		if r < 'a' || r > 'z' {
-			return "en"
-		}
-	}
-	return normalized
-}
-
-func markdownMDParseLanguageFromFile(path string) string {
-	stem := strings.TrimSpace(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
-	if stem == "" {
-		return ""
-	}
-
-	matches := markdownVersionFilePattern.FindStringSubmatch(stem)
-	if len(matches) != 4 {
-		return ""
-	}
-
-	return markdownMDNormalizeVersionLanguage(matches[2])
-}
-
-func markdownMDParseVersionFromFile(path string) string {
-	stem := strings.TrimSpace(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
-	if stem == "" {
-		return ""
-	}
-
-	matches := markdownVersionFilePattern.FindStringSubmatch(stem)
-	if len(matches) != 4 {
-		return ""
-	}
-
-	return markdownMDNormalizeMarkdownVersion(matches[3])
-}
-
-func markdownMDExtractLeadingFrontmatter(body string) (string, bool) {
-	if !strings.HasPrefix(body, "---\n") {
-		return "", false
-	}
-	end := strings.Index(body[4:], "\n---\n")
-	if end < 0 {
-		return "", false
-	}
-	return body[4 : end+4], true
-}
-
-func markdownMDStripLeadingFrontmatter(body string) string {
-	if !strings.HasPrefix(body, "---\n") {
-		return body
-	}
-	end := strings.Index(body[4:], "\n---\n")
-	if end < 0 {
-		return body
-	}
-	return body[end+9:]
-}
-
-func markdownMDNormalizeFrontmatterNewlines(input string) string {
-	input = strings.ReplaceAll(input, "\r\n", "\n")
-	return strings.ReplaceAll(input, "\r", "\n")
-}
-
-func markdownMDReadStringField(values map[string]any, key string) string {
+func mdReadStringField(values map[string]any, key string) string {
 	value, ok := values[key]
 	if !ok || value == nil {
 		return ""
@@ -354,26 +258,7 @@ func markdownMDReadStringField(values map[string]any, key string) string {
 	}
 }
 
-func markdownMDReadKeywordsField(value any) []string {
-	switch typed := value.(type) {
-	case nil:
-		return nil
-	case string:
-		return markdownMDNormalizeKeywords(typed)
-	case []any:
-		values := make([]string, 0, len(typed))
-		for _, item := range typed {
-			values = append(values, fmt.Sprint(item))
-		}
-		return markdownMDNormalizeKeywords(values)
-	case []string:
-		return markdownMDNormalizeKeywords(typed)
-	default:
-		return markdownMDNormalizeKeywords(fmt.Sprint(typed))
-	}
-}
-
-func markdownMDNormalizeKeywords(value any) []string {
+func mdNormalizeKeywords(value any) []string {
 	var parts []string
 	switch typed := value.(type) {
 	case nil:
@@ -407,7 +292,7 @@ func markdownMDNormalizeKeywords(value any) []string {
 	return keywords
 }
 
-func markdownMDFirstNonEmpty(values ...string) string {
+func mdFirstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
 			return strings.TrimSpace(value)
@@ -416,18 +301,7 @@ func markdownMDFirstNonEmpty(values ...string) string {
 	return ""
 }
 
-func markdownMDWriteFrontmatterString(builder *strings.Builder, key, value string) {
-	builder.WriteString(fmt.Sprintf("%s: %q\n", key, value))
-}
-
-func markdownMDWriteFrontmatterKeywords(builder *strings.Builder, keywords []string) {
-	builder.WriteString("keywords:\n")
-	for _, keyword := range markdownMDNormalizeKeywords(keywords) {
-		builder.WriteString(fmt.Sprintf("  - %q\n", keyword))
-	}
-}
-
-func markdownMDFormatFrontmatterDate(value string) string {
+func mdFormatFrontmatterDate(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
@@ -442,40 +316,43 @@ func markdownMDFormatFrontmatterDate(value string) string {
 	return value
 }
 
-func markdownMDFileCreatedDate(path string) string {
-	date, _ := filetime.Formatted(path, "created", time.RFC3339)
-	return date
-}
-
-func markdownMDFileModifiedDate(path string) string {
-	date, _ := filetime.Formatted(path, "modified", time.RFC3339)
-	return date
-}
-
-func markdownMDFileName(meta MetaData) string {
+func mdFileName(meta MetaData) string {
 	baseStem := strings.TrimSpace(meta.Title)
 	if baseStem == "" {
 		baseStem = "Document"
 	}
 
-	language := markdownMDNormalizeVersionLanguage(meta.Language)
+	language := strings.ToLower(strings.TrimSpace(meta.Language))
 	if language == "" {
-		language = "EN"
+		language = "xx"
+	}
+	switch language {
+	case "english":
+		language = "en"
+	case "german", "deutsch":
+		language = "de"
+	}
+	language = strings.ReplaceAll(language, "_", "-")
+	if idx := strings.IndexByte(language, '-'); idx >= 0 {
+		language = language[:idx]
+	}
+	if len(language) > 2 {
+		language = language[:2]
+	}
+	if len(language) != 2 {
+		language = "xx"
+	}
+	for _, r := range language {
+		if r < 'a' || r > 'z' {
+			language = "xx"
+			break
+		}
 	}
 
-	version := markdownMDNormalizeMarkdownVersion(meta.Version)
+	version := mdNormalizeVersion(meta.Version)
 	if version == "" {
 		version = "1.0"
 	}
 
 	return fmt.Sprintf("%s_%s_v%s.md", baseStem, language, version)
-}
-
-func markdownMDZipFileName(name string) string {
-	base := strings.TrimSpace(filepath.Base(name))
-	base = strings.TrimSuffix(base, filepath.Ext(base))
-	if base == "" {
-		base = "document"
-	}
-	return base + ".zip"
 }

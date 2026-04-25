@@ -15,7 +15,7 @@ func main() {
 		inputPath = os.Args[1]
 	}
 
-	docs, err := CreateFromMarkdown(inputPath)
+	docs, err := CreateFromPowerPoint(inputPath, &PowerPointParams{IncludeSlides: true, IncludeImages: true})
 	if err != nil {
 		log.Fatalf("convert %s: %v", inputPath, err)
 	}
@@ -31,6 +31,6 @@ func main() {
 
 func defaultInputPath() string {
 	// return filepath.Join("TestData", "strategy_IT_V1.3.docx")
-	//return filepath.Join("TestData", "real.pptx")
-	return filepath.Join("TestData", "sample.md")
+	return filepath.Join("TestData", "real.pptx")
+	// return filepath.Join("TestData", "sample.md")
 }
