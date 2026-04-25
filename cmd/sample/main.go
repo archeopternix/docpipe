@@ -15,7 +15,7 @@ func main() {
 		inputPath = os.Args[1]
 	}
 
-	docs, err := CreateFromPowerPoint(inputPath, &PowerPointParams{IncludeSlides: true, IncludeImages: true})
+	docs, err := ParsePowerPointFile(inputPath, &PowerPointParams{IncludeSlides: true, IncludeImages: true})
 	if err != nil {
 		log.Fatalf("convert %s: %v", inputPath, err)
 	}

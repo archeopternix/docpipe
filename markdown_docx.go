@@ -39,11 +39,26 @@ type officeCoreProperties struct {
 	Revision    string   `xml:"revision"`
 }
 
+// WordParams and IncludeImages controls whether embedded images should be extracted and
+// stored into the resulting Markdown ZIP (under /media).
 type WordParams struct {
 	IncludeImages bool
 }
 
-func CreateFromWord(path string, params *WordParams) (*Markdown, error) {
+// ParseWordFile converts a .docx file into a Markdown ZIP document.
+//
+// Behavior:
+//   - Only ".docx" is supported; other extensions return an error.
+//   - Uses `pandoc` to convert the document to GitHub-Flavored Markdown (GFM)
+//     with wrapping disabled.
+//   - If params.IncludeImages is true, images are extracted and added to the
+//     Markdown object under /media.
+//   - Produces cleaned markdown and injects YAML frontmatter based on document
+//     metadata.
+//
+// params:
+//   - If params is nil, defaults are used (IncludeImages=true).
+func ParseWordFile(path string, params *WordParams) (*Markdown, error) {
 	if params == nil {
 		params = &WordParams{
 			IncludeImages: true,
@@ -128,6 +143,8 @@ func CreateFromWord(path string, params *WordParams) (*Markdown, error) {
 
 	return doc, nil
 }
+
+// --------------------------------------------------------------------
 
 func officeNewDocument(path string) (*Markdown, error) {
 	original, err := os.ReadFile(path)

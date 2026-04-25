@@ -16,11 +16,29 @@ import (
 var pptxLibreOfficeSlideSuffixPattern = regexp.MustCompile(`(?i)\s*\d+\s*$`)
 
 type PowerPointParams struct {
+	// IncludeSlides controls whether slide screenshots should be exported (when
+	// supported on the current OS) and included into the resulting ZIP (under /slides)
 	IncludeSlides bool
+
+	// IncludeImages controls whether images should be extracted and included
+	// into the resulting ZIP (under /media).
 	IncludeImages bool
 }
 
-func CreateFromPowerPoint(path string, params *PowerPointParams) (*Markdown, error) {
+// ParsePowerPointFile converts a .pptx file into a Markdown ZIP document.
+//
+// Behavior:
+//   - Only ".pptx" is supported; other extensions return an error.
+//   - Uses `pptx2md` to generate a markdown file (and optionally extract images).
+//   - Cleans the produced markdown and injects YAML frontmatter.
+//   - If IncludeSlides is enabled and slide screenshot export is available:
+//   - Windows: uses PowerPoint COM automation via a generated PowerShell script.
+//   - Linux: uses LibreOffice (`soffice`/`libreoffice`) headless conversion.
+//     Slide screenshots are stored under /slides and linked from the markdown.
+//
+// params:
+//   - If params is nil, defaults are used (IncludeSlides=true, IncludeImages=true).
+func ParsePowerPointFile(path string, params *PowerPointParams) (*Markdown, error) {
 	if params == nil {
 		params = &PowerPointParams{
 			IncludeSlides: true,
@@ -203,6 +221,12 @@ func CreateFromPowerPoint(path string, params *PowerPointParams) (*Markdown, err
 	return doc, nil
 }
 
+// pptxExportSlideScreenshots exports slide screenshots for a PPTX into outputDir.
+//
+// OS support:
+//   - Windows: PowerPoint COM automation (via PowerShell).
+//   - Linux: LibreOffice headless conversion.
+//   - Other OSes: returns an error.
 func pptxExportSlideScreenshots(sourcePath, outputDir string) error {
 	sourcePath, err := filepath.Abs(sourcePath)
 	if err != nil {

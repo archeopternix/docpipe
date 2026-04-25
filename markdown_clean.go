@@ -28,15 +28,13 @@ var (
 )
 
 type CleanUpParameters struct {
-	UsingAI        bool
-	CleanUpTables  bool
-	DetectLangByAI bool
+	UsingAI       bool
+	CleanUpTables bool
 }
 
 type TranslationParameters struct {
-	TargetLang     string
-	Rephrase       bool
-	DetectLangByAI bool
+	TargetLang string
+	Rephrase   bool
 }
 
 type openAIResponsesRequest struct {
@@ -63,6 +61,13 @@ type openAIResponsesResponse struct {
 
 // LanguageDetectionAI detects the markdown document language using OpenAI and
 // returns a two-letter language code such as "de" or "en".
+//
+// Requirements:
+//   - usingAI must be true
+//   - receiver and its markdown content must be non-nil
+//   - AI integration must be active (see DetectAI)
+//
+// Returns a pointer to the detected ISO 639-1 code. If detection fails, an error is returned and the markdown is unchanged.
 func (m *Markdown) LanguageDetectionAI(usingAI bool) (*string, error) {
 	if !usingAI {
 		return nil, fmt.Errorf("language detection by AI is disabled")
@@ -104,6 +109,12 @@ func (m *Markdown) LanguageDetectionAI(usingAI bool) (*string, error) {
 }
 
 // DetectAI checks whether the OpenAI integration is configured.
+//
+// It validates environment variables:
+//   - OPENAI_API_KEY must be set and must not contain line breaks.
+//   - OPENAI_MODEL may be empty; if set, it must not contain line breaks.
+//
+// Returns true if configuration looks usable, otherwise false.
 func DetectAI() (bool, error) {
 	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	if apiKey == "" {
@@ -123,6 +134,14 @@ func DetectAI() (bool, error) {
 
 // CleanUpMarkdown normalizes markdown content and optionally asks OpenAI to
 // reformat the document without changing its meaning.
+//
+// Behavior:
+//   - Archives the current markdown into /versions before modifying.
+//   - Performs deterministic cleanup (HTML stripping, optional table conversion, etc.).
+//   - If UsingAI is true, calls OpenAI to reformat (must preserve content) and
+//     then re-detects language via AI.
+//   - If UsingAI is false, sets MetaData.Language to "xx".
+//   - Bumps the minor version and re-applies YAML frontmatter.
 func (m *Markdown) CleanUpMarkdown(param *CleanUpParameters) error {
 	if m == nil || m.markdownFile == nil {
 		return fmt.Errorf("markdown is nil")
@@ -149,7 +168,7 @@ func (m *Markdown) CleanUpMarkdown(param *CleanUpParameters) error {
 
 	previousMarkdown := m.markdownFile
 	m.markdownFile = bytes.NewBufferString(text)
-	if param.DetectLangByAI {
+	if param.UsingAI {
 		code, err := m.LanguageDetectionAI(true)
 		if err != nil {
 			m.markdownFile = previousMarkdown
@@ -167,6 +186,12 @@ func (m *Markdown) CleanUpMarkdown(param *CleanUpParameters) error {
 
 // TranslateTo translates the markdown to TargetLang using OpenAI. If Rephrase
 // is true, idiomatic phrasing may be adapted while preserving the meaning.
+//
+// Behavior:
+//   - Archives the current markdown into /versions before modifying.
+//   - Preserves markdown structure, YAML keys, links, image paths, code blocks,
+//     tables, and factual content.
+//   - Updates metadata language (normalized) and re-applies YAML frontmatter.
 func (m *Markdown) TranslateTo(param *TranslationParameters) error {
 	if m == nil || m.markdownFile == nil {
 		return fmt.Errorf("markdown is nil")
@@ -196,17 +221,9 @@ func (m *Markdown) TranslateTo(param *TranslationParameters) error {
 		return err
 	}
 
-	previousMarkdown := m.markdownFile
 	m.markdownFile = bytes.NewBufferString(translated)
 	if normalized := mdNormalizeLanguageCode(targetLang); normalized != "" {
 		m.metaData.Language = normalized
-	} else if param.DetectLangByAI {
-		code, err := m.LanguageDetectionAI(true)
-		if err != nil {
-			m.markdownFile = previousMarkdown
-			return err
-		}
-		m.metaData.Language = *code
 	} else {
 		m.metaData.Language = "xx"
 	}

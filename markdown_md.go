@@ -19,7 +19,15 @@ type mdFileNameParts struct {
 	Version  string
 }
 
-func CreateFromMarkdown(path string) (*Markdown, error) {
+// ParseMarkdownFile loads a standalone markdown file (".md" or ".markdown") into a Markdown document.
+//
+// Behavior:
+//   - Reads YAML frontmatter if present and merges with defaults.
+//   - Sets default Title/Date/ChangedDate/Version when missing.
+//   - Stores the original file bytes as both originalFile and markdownFile.
+//   - Applies (normalizes/rewrites) YAML frontmatter.
+//   - Generates a ZIP filename for later export.
+func ParseMarkdownFile(path string) (*Markdown, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err

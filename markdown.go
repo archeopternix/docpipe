@@ -19,6 +19,14 @@ var (
 	datetimelayout          = "2006-01-02 15:04:05"
 )
 
+// Markdown represents the internal ZIP-backed markdown document format.
+//
+// The ZIP layout created by SaveAsZip/CreateZipBytes is:
+//   - /<root>.md (the primary markdown file, with YAML frontmatter)
+//   - /document/<original> (the original source file, if present)
+//   - /media/* (extracted images)
+//   - /slides/* (slide screenshots, when available)
+//   - /versions/* (archived markdown versions)
 type Markdown struct {
 	fileName         string                   // Name of the zip
 	originalFile     *bytes.Buffer            // will be saved under /document
@@ -28,8 +36,6 @@ type Markdown struct {
 	markdownVersions map[string]*bytes.Buffer // will be save in /versions under the id "<lang>_<version>" e.g. "DE_v1.2"
 	metaData         MetaData
 }
-
-type Documents = Markdown
 
 // MetaData holds the metadata information of the markdown document.
 type MetaData struct {
@@ -46,15 +52,20 @@ type MetaData struct {
 	Keywords         []string
 }
 
-func NewDocuments() *Documents {
-	return &Documents{
-		extractedImages:  make(map[string]*bytes.Buffer),
-		extractedSlides:  make(map[string]*bytes.Buffer),
-		markdownVersions: make(map[string]*bytes.Buffer),
-	}
-}
-
-func CreateFromZip(path string) (*Markdown, error) {
+// ParseZipFile loads a Markdown ZIP document from disk.
+//
+// Expected ZIP contents:
+//   - A root markdown file in the ZIP root (".md" or ".markdown").
+//   - Optional: /document/*, /media/*, /slides/*, /versions/*
+//
+// Behavior:
+//   - Rejects non-".zip" inputs.
+//   - Extracts the first encountered original document under /document and
+//     sets MetaData.OriginalDocument/OriginalFormat accordingly.
+//   - Parses metadata from the root markdown (YAML frontmatter) when present;
+//     otherwise falls back to defaults.
+//   - If no root markdown exists, returns an error.
+func ParseZipFile(path string) (*Markdown, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
 	}
@@ -68,7 +79,12 @@ func CreateFromZip(path string) (*Markdown, error) {
 	}
 	defer reader.Close()
 
-	doc := NewDocuments()
+	doc := &Markdown{
+		extractedImages:  make(map[string]*bytes.Buffer),
+		extractedSlides:  make(map[string]*bytes.Buffer),
+		markdownVersions: make(map[string]*bytes.Buffer),
+	}
+
 	doc.fileName = filepath.Base(path)
 	doc.metaData = *mdDefaultMetaData(path)
 
@@ -120,6 +136,12 @@ func CreateFromZip(path string) (*Markdown, error) {
 
 }
 
+// SaveAsZip writes the Markdown document as a ZIP file.
+//
+// If path is empty, "." is used.
+// The ZIP filename is generated and includes a UUID prefix.
+//
+// Returns an error if the receiver is nil or if writing fails.
 func (d *Markdown) SaveAsZip(path string) error {
 	if d == nil {
 		return fmt.Errorf("markdown is nil")
@@ -150,6 +172,13 @@ func (d *Markdown) SaveAsZip(path string) error {
 	return zw.Close()
 }
 
+// CreateZipBytes writes the Markdown document into an existing zip.Writer.
+//
+// It conditionally writes entries for markdown, original document, images,
+// slides, and archived versions (if present/non-empty).
+//
+// Returns an error if the receiver or writer is nil, or if any zip entry
+// creation fails.
 func (d *Markdown) CreateZipBytes(writer *zip.Writer) error {
 	if d == nil {
 		return fmt.Errorf("markdown is nil")
@@ -195,9 +224,15 @@ func (d *Markdown) CreateZipBytes(writer *zip.Writer) error {
 	return nil
 }
 
+// GetMarkdownFileName returns the canonical markdown filename derived from metadata
+// (e.g. "Title_en_v1.0.md").
 func (d Markdown) GetMarkdownFileName() string {
 	return mdFileName(d.metaData)
 }
+
+// ----------------------------------------------------------------
+// Internal helper functions for ZIP processing and naming conventions.
+// These are not intended for external use and may be subject to change.
 
 func markdownZipReadFile(file *zip.File) ([]byte, error) {
 	rc, err := file.Open()
