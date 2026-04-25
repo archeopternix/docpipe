@@ -119,7 +119,7 @@ Environment variables
 * OPENAI_MODEL (optional; defaults to gpt-4.1-mini if empty)
 If __OPENAI_API_KEY__ is not set, __DetectAI()__ returns __false__ and AI functions will fail.
 
-###Translate
+### Translate
 
 ```go
 err := doc.TranslateTo(&docpipe.TranslationParameters{
