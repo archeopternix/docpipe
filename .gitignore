@@ -1,3 +1,6 @@
 sample.exe
-TestData/*
+TestData/
+cmd/
+prompts/
+.vscode/
 CODEX*.md
