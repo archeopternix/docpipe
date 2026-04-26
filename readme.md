@@ -71,7 +71,20 @@ Before modifications, the current Markdown can be archived under `/versions`
 through `UpdateOptions`.
 
 AI-backed operations are exposed through service methods that accept an
-`ai.Client` implementation for translation and language detection.
+`ai.Client` implementation for translation and language detection. The `ai`
+package includes a ChatGPT-backed client for OpenAI's Responses API:
+
+```go
+client := ai.NewChatGPTClientFromEnv()
+err := service.Translate(ctx, doc, client, "de", true, docpipe.UpdateOptions{
+	ArchivePrevious: true,
+	BumpVersion:     true,
+})
+```
+
+Set `OPENAI_API_KEY` before using the environment constructor. `OPENAI_MODEL`
+and `OPENAI_BASE_URL` can be used to override the default model and API base
+URL.
 
 ## External Dependencies
 

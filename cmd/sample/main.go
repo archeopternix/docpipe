@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"docpipe"
+	"docpipe/ai"
 	dpstore "docpipe/store"
 	"fmt"
 	"log"
@@ -32,6 +33,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("import %s: %v", inputPath, err)
 	}
+
+	var lang string
+
+	lang, err = service.DetectLanguage(context.Background(), doc, ai.NewChatGPTClientFromEnv())
+	if err != nil {
+		log.Fatalf("language detection %v", err)
+	}
+	fm := docpipe.Frontmatter{Language: lang}
+	service.UpdateFrontmatter(context.Background(), doc, fm, docpipe.UpdateOptions{ArchivePrevious: true, BumpVersion: true})
 
 	outPath := filepath.Join(filepath.Dir(inputPath), doc.ID+".zip")
 	out, err := os.Create(outPath)

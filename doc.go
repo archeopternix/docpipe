@@ -41,7 +41,8 @@
 // current markdown may be archived under /versions through UpdateOptions.
 //
 // AI-backed operations are exposed through service methods that accept an
-// ai.Client implementation for translation and language detection.
+// ai.Client implementation for translation and language detection. Package ai
+// includes a ChatGPT-backed client for OpenAI's Responses API.
 //
 // # External dependencies
 //
