@@ -7,7 +7,48 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestNewChatGPTClientUsesDefaultHTTPTimeout(t *testing.T) {
+	client := NewChatGPTClient("test-key")
+	if client.HTTPClient == nil {
+		t.Fatal("NewChatGPTClient() HTTPClient = nil, want default client")
+	}
+	if client.HTTPClient.Timeout != DefaultChatGPTHTTPTimeout {
+		t.Fatalf("HTTPClient.Timeout = %s, want %s", client.HTTPClient.Timeout, DefaultChatGPTHTTPTimeout)
+	}
+}
+
+func TestNewChatGPTClientFromEnvUsesDefaultHTTPTimeout(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	client := NewChatGPTClientFromEnv()
+	if client.HTTPClient == nil {
+		t.Fatal("NewChatGPTClientFromEnv() HTTPClient = nil, want default client")
+	}
+	if client.HTTPClient.Timeout != DefaultChatGPTHTTPTimeout {
+		t.Fatalf("HTTPClient.Timeout = %s, want %s", client.HTTPClient.Timeout, DefaultChatGPTHTTPTimeout)
+	}
+}
+
+func TestChatGPTClientHTTPClientFallbackUsesDefaultTimeout(t *testing.T) {
+	client := &ChatGPTClient{}
+	httpClient := client.httpClient()
+	if httpClient == nil {
+		t.Fatal("httpClient() = nil, want default client")
+	}
+	if httpClient.Timeout != DefaultChatGPTHTTPTimeout {
+		t.Fatalf("httpClient().Timeout = %s, want %s", httpClient.Timeout, DefaultChatGPTHTTPTimeout)
+	}
+}
+
+func TestChatGPTClientHTTPClientPreservesCustomClient(t *testing.T) {
+	custom := &http.Client{Timeout: 5 * time.Second}
+	client := &ChatGPTClient{HTTPClient: custom}
+	if got := client.httpClient(); got != custom {
+		t.Fatalf("httpClient() = %p, want custom %p", got, custom)
+	}
+}
 
 func TestChatGPTClientGenerate(t *testing.T) {
 	var gotAuth string

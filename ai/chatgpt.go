@@ -10,12 +10,16 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
-	DefaultChatGPTBaseURL = "https://api.openai.com/v1"
-	DefaultChatGPTModel   = "gpt-5.4-mini"
+	DefaultChatGPTBaseURL     = "https://api.openai.com/v1"
+	DefaultChatGPTModel       = "gpt-5.4-mini"
+	DefaultChatGPTHTTPTimeout = 2 * time.Minute
 )
+
+var defaultChatGPTHTTPClient = &http.Client{Timeout: DefaultChatGPTHTTPTimeout}
 
 // ChatGPTClient implements Client using OpenAI's Responses API.
 type ChatGPTClient struct {
@@ -29,9 +33,10 @@ type ChatGPTClient struct {
 // NewChatGPTClient creates a ChatGPT-backed AI client.
 func NewChatGPTClient(apiKey string) *ChatGPTClient {
 	return &ChatGPTClient{
-		APIKey:  strings.TrimSpace(apiKey),
-		Model:   DefaultChatGPTModel,
-		BaseURL: DefaultChatGPTBaseURL,
+		APIKey:     strings.TrimSpace(apiKey),
+		Model:      DefaultChatGPTModel,
+		BaseURL:    DefaultChatGPTBaseURL,
+		HTTPClient: &http.Client{Timeout: DefaultChatGPTHTTPTimeout},
 	}
 }
 
@@ -91,12 +96,7 @@ func (c *ChatGPTClient) Generate(ctx context.Context, instructions, input string
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	httpClient := c.HTTPClient
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
-
-	resp, err := httpClient.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -128,6 +128,13 @@ func (c *ChatGPTClient) Generate(ctx context.Context, instructions, input string
 		return "", fmt.Errorf("openai: response did not include text")
 	}
 	return text, nil
+}
+
+func (c *ChatGPTClient) httpClient() *http.Client {
+	if c.HTTPClient != nil {
+		return c.HTTPClient
+	}
+	return defaultChatGPTHTTPClient
 }
 
 type chatGPTRequest struct {
