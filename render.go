@@ -1,7 +1,6 @@
 package docpipe
 
 import (
-	"bytes"
 	"fmt"
 	stdhtml "html"
 	"strings"
@@ -27,161 +26,6 @@ type HeadingNode struct {
 	Children []HeadingNode
 }
 
-// RenderHTML renders the markdown body to HTML. When SplitSections is true,
-// title and frontmatter are returned separately from the markdown body.
-func (m *Markdown) RenderHTML(opt RenderOptions) (Rendered, error) {
-	if m == nil {
-		return Rendered{}, fmt.Errorf("markdown is nil")
-	}
-
-	body, err := m.GetMarkdownBody()
-	if err != nil {
-		return Rendered{}, err
-	}
-	bodyHTML, err := markdownRenderHTML(body, opt)
-	if err != nil {
-		return Rendered{}, err
-	}
-
-	rendered := Rendered{BodyHTML: bodyHTML}
-	if opt.SplitSections {
-		rendered.TitleHTML = markdownRenderTitleHTML(m.metaData.Title, opt.AnchorifyHeadings)
-		rendered.FrontmatterHTML = markdownRenderFrontmatterHTML(m.metaData)
-	}
-	return rendered, nil
-}
-
-// RenderFrontmatter returns the current metadata in a web-layer friendly form.
-func (m *Markdown) RenderFrontmatter() (MetaData, error) {
-	if m == nil {
-		return MetaData{}, fmt.Errorf("markdown is nil")
-	}
-	return m.metaData, nil
-}
-
-// GetMarkdownBody returns the markdown content without YAML frontmatter.
-func (m *Markdown) GetMarkdownBody() (string, error) {
-	body, err := m.currentMarkdownString()
-	if err != nil {
-		return "", err
-	}
-	_, markdownBody, ok := mdSplitFrontmatterContent(body)
-	if !ok {
-		return body, nil
-	}
-	return markdownBody, nil
-}
-
-// SetFrontmatter replaces metadata and stores a versioned markdown update.
-func (m *Markdown) SetFrontmatter(md MetaData) error {
-	if m == nil {
-		return fmt.Errorf("markdown is nil")
-	}
-	body, err := m.GetMarkdownBody()
-	if err != nil {
-		return err
-	}
-	if md.Version == "" {
-		md.Version = m.metaData.Version
-	}
-	_, err = m.changeMarkdown(mdComposeMarkdownWithMeta(md, body))
-	return err
-}
-
-// HeadingIndex extracts a deterministic heading tree from the markdown body.
-func (m *Markdown) HeadingIndex(maxLevel int) ([]HeadingNode, error) {
-	if m == nil {
-		return nil, fmt.Errorf("markdown is nil")
-	}
-	if maxLevel <= 0 {
-		maxLevel = 3
-	}
-	if maxLevel > 6 {
-		maxLevel = 6
-	}
-
-	body, err := m.GetMarkdownBody()
-	if err != nil {
-		return nil, err
-	}
-
-	type treeNode struct {
-		Level    int
-		Text     string
-		AnchorID string
-		Children []*treeNode
-	}
-
-	var roots []*treeNode
-	var stack []*treeNode
-	anchors := newMarkdownAnchorGenerator()
-	for _, heading := range markdownExtractHeadings(body, maxLevel) {
-		node := &treeNode{
-			Level:    heading.Level,
-			Text:     heading.Text,
-			AnchorID: anchors.Anchor(heading.Text),
-		}
-
-		for len(stack) > 0 && stack[len(stack)-1].Level >= node.Level {
-			stack = stack[:len(stack)-1]
-		}
-		if len(stack) == 0 {
-			roots = append(roots, node)
-		} else {
-			parent := stack[len(stack)-1]
-			parent.Children = append(parent.Children, node)
-		}
-		stack = append(stack, node)
-	}
-
-	var convert func(*treeNode) HeadingNode
-	convert = func(node *treeNode) HeadingNode {
-		out := HeadingNode{
-			Level:    node.Level,
-			Text:     node.Text,
-			AnchorID: node.AnchorID,
-		}
-		for _, child := range node.Children {
-			out.Children = append(out.Children, convert(child))
-		}
-		return out
-	}
-
-	index := make([]HeadingNode, 0, len(roots))
-	for _, root := range roots {
-		index = append(index, convert(root))
-	}
-	return index, nil
-}
-
-func mdSplitFrontmatterContent(markdown string) (frontmatter, body string, ok bool) {
-	normalized := strings.ReplaceAll(strings.ReplaceAll(markdown, "\r\n", "\n"), "\r", "\n")
-	if !strings.HasPrefix(normalized, "---\n") {
-		return "", normalized, false
-	}
-
-	tail := normalized[4:]
-	if idx := strings.Index(tail, "\n---\n"); idx >= 0 {
-		return tail[:idx], strings.TrimLeft(tail[idx+5:], "\n"), true
-	}
-	if strings.HasSuffix(tail, "\n---") {
-		return strings.TrimSuffix(tail, "\n---"), "", true
-	}
-	return "", normalized, false
-}
-
-func mdComposeMarkdownWithMeta(meta MetaData, body string) string {
-	doc := &Markdown{
-		markdownFile: bytes.NewBufferString(body),
-		metaData:     meta,
-	}
-	mdApplyMetaDataFrontmatter(doc)
-	if doc.markdownFile == nil {
-		return ""
-	}
-	return doc.markdownFile.String()
-}
-
 func markdownRenderTitleHTML(title string, anchorify bool) string {
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -194,7 +38,7 @@ func markdownRenderTitleHTML(title string, anchorify bool) string {
 	return fmt.Sprintf("<h1 id=%q>%s</h1>\n", anchors.Anchor(title), stdhtml.EscapeString(title))
 }
 
-func markdownRenderFrontmatterHTML(meta MetaData) string {
+func markdownRenderFrontmatterHTML(meta Frontmatter) string {
 	fields := []struct {
 		Name  string
 		Value string

@@ -12,81 +12,45 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+
+	"docpipe/clean"
 )
 
-type PowerPointParams struct {
-	// IncludeSlides controls whether slide screenshots should be exported (when
-	// supported on the current OS) and included into the resulting ZIP (under /slides)
-	IncludeSlides bool
-
-	// IncludeImages controls whether images should be extracted and included
-	// into the resulting ZIP (under /media).
-	IncludeImages bool
-}
-
-// ParsePowerPointFile converts a .pptx file into a Markdown ZIP document.
-//
-// Behavior:
-//   - Only ".pptx" is supported; other extensions return an error.
-//   - Uses `pptx2md` to generate a markdown file (and optionally extract images).
-//   - Cleans the produced markdown and injects YAML frontmatter.
-//   - If IncludeSlides is enabled and slide screenshot export is available:
-//   - Windows: uses PowerPoint COM automation via a generated PowerShell script.
-//   - Linux: uses LibreOffice (`soffice`/`libreoffice`) headless conversion.
-//     Slide screenshots are stored under /slides and linked from the markdown.
-//
-// params:
-//   - If params is nil, defaults are used (IncludeSlides=true, IncludeImages=true).
-func ParsePowerPointFile(path string, params *PowerPointParams) (*Markdown, error) {
-	return ParsePowerPointFileContext(context.Background(), path, params)
-}
-
-// ParsePowerPointFileContext converts a .pptx file into a Markdown ZIP document.
-func ParsePowerPointFileContext(ctx context.Context, path string, params *PowerPointParams) (*Markdown, error) {
+func convertPptx(ctx context.Context, sourcePath string, src ImportSource, opt PptxOptions) (importedDocument, error) {
 	ctx = contextOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return importedDocument{}, err
 	}
-	if params == nil {
-		params = &PowerPointParams{
-			IncludeSlides: true,
-			IncludeImages: true,
-		}
-	}
-
-	if _, err := os.Stat(path); err != nil {
-		return nil, fmt.Errorf("%w: %q: %w", ErrInvalidInput, path, err)
-	}
-	if mdNormalizeExtension(filepath.Ext(path)) != ".pptx" {
-		return nil, fmt.Errorf("%w: powerpoint conversion not supported for %q", ErrUnsupported, filepath.Ext(path))
+	if mdNormalizeExtension(filepath.Ext(sourcePath)) != ".pptx" {
+		return importedDocument{}, ErrUnsupported
 	}
 
 	pptx2mdPath, err := requiredTool("pptx2md")
 	if err != nil {
-		return nil, err
+		return importedDocument{}, err
 	}
 
-	doc, err := officeNewDocument(path)
+	meta, err := officeFrontmatter(sourcePath, src)
 	if err != nil {
-		return nil, err
+		return importedDocument{}, err
 	}
 	workDir, err := os.MkdirTemp("", "pptx2md-*")
 	if err != nil {
-		return nil, err
+		return importedDocument{}, err
 	}
 	defer func() { _ = os.RemoveAll(workDir) }()
 
-	sourcePath, err := filepath.Abs(path)
+	absSourcePath, err := filepath.Abs(sourcePath)
 	if err != nil {
-		return nil, err
+		return importedDocument{}, err
 	}
 
-	markdownFile := mdFileName(doc.metaData)
+	markdownFile := mdFileName(meta)
 	args := []string{
-		sourcePath,
+		absSourcePath,
 		"-o", markdownFile,
 	}
-	if params.IncludeImages {
+	if opt.IncludeImages {
 		args = append(args, "-i", "media")
 	}
 
@@ -97,15 +61,19 @@ func ParsePowerPointFileContext(ctx context.Context, path string, params *PowerP
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, commandRunError(cmdCtx, "pptx2md", timeout, err, stderr.Bytes())
+		return importedDocument{}, commandRunError(cmdCtx, "pptx2md", timeout, err, stderr.Bytes())
 	}
 
 	body, err := os.ReadFile(filepath.Join(workDir, markdownFile))
 	if err != nil {
-		return nil, err
+		return importedDocument{}, err
 	}
 
-	if params.IncludeImages {
+	imported := importedDocument{
+		Media:  map[string][]byte{},
+		Slides: map[string][]byte{},
+	}
+	if opt.IncludeImages {
 		if err := filepath.Walk(filepath.Join(workDir, "media"), func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				if os.IsNotExist(err) {
@@ -124,123 +92,137 @@ func ParsePowerPointFileContext(ctx context.Context, path string, params *PowerP
 			if err != nil {
 				return err
 			}
-			doc.extractedImages[filepath.ToSlash(filepath.Join("media", relPath))] = bytes.NewBuffer(fileBody)
+			imported.Media[filepath.ToSlash(filepath.Join("media", relPath))] = fileBody
 			return nil
 		}); err != nil {
-			return nil, err
+			return importedDocument{}, err
 		}
 	}
 
-	if params.IncludeSlides {
-		screenshotAvailable := false
-		switch runtime.GOOS {
-		case "windows":
-			if err := pptxCommandAvailable("powershell", "pwsh"); err == nil {
-				regCtx, cancel, _ := contextWithToolTimeout(ctx, defaultExternalToolTimeout)
-				cmd := exec.CommandContext(regCtx, "reg", "query", `HKCR\PowerPoint.Application`)
-				screenshotAvailable = cmd.Run() == nil
-				cancel()
+	if opt.IncludeSlides {
+		slides, err := pptxSlideScreenshots(ctx, sourcePath)
+		if err != nil {
+			if !strings.Contains(err.Error(), ErrUnsupported.Error()) && !strings.Contains(err.Error(), ErrToolMissing.Error()) {
+				return importedDocument{}, err
 			}
-		case "linux":
-			screenshotAvailable = pptxCommandAvailable("soffice", "libreoffice") == nil
 		}
-		if screenshotAvailable {
-			screensDir, err := os.MkdirTemp("", "pptx-slides-*")
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = os.RemoveAll(screensDir) }()
-
-			if err := pptxExportSlideScreenshots(ctx, path, screensDir); err != nil {
-				return nil, err
-			}
-			entries, err := os.ReadDir(screensDir)
-			if err != nil {
-				return nil, err
-			}
-			for _, entry := range entries {
-				if entry.IsDir() || strings.ToLower(filepath.Ext(entry.Name())) != ".png" {
-					continue
-				}
-				slidePath := filepath.Join(screensDir, entry.Name())
-				slideBody, err := os.ReadFile(slidePath)
-				if err != nil {
-					return nil, err
-				}
-				doc.extractedSlides[filepath.ToSlash(filepath.Join("slides", entry.Name()))] = bytes.NewBuffer(slideBody)
-			}
+		for name, body := range slides {
+			imported.Slides[name] = body
 		}
 	}
 
-	text := NormalizeMarkdown(string(body), true)
-	if params.IncludeSlides {
-		var slideLinks []string
-		for name := range doc.extractedSlides {
-			if strings.ToLower(filepath.Ext(name)) != ".png" {
-				continue
-			}
-			slideLinks = append(slideLinks, filepath.ToSlash(name))
+	text := clean.Normalize(string(body), clean.Options{CleanTables: true})
+	if opt.IncludeSlides {
+		text = pptxAppendSlideLinks(text, imported.Slides)
+	}
+	imported.Root = []byte(mdComposeMarkdownWithMeta(meta, text))
+	return imported, nil
+}
+
+func pptxAppendSlideLinks(text string, slides map[string][]byte) string {
+	var slideLinks []string
+	for name := range slides {
+		if strings.ToLower(filepath.Ext(name)) != ".png" {
+			continue
 		}
-		sort.Strings(slideLinks)
-		lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-		var headingIdx []int
-		for i, line := range lines {
-			if strings.HasPrefix(strings.TrimSpace(line), "# ") {
-				headingIdx = append(headingIdx, i)
-			}
-		}
-		if len(headingIdx) == 0 {
-			var builder strings.Builder
-			builder.WriteString(strings.TrimRight(text, "\n"))
-			builder.WriteString("\n\n")
-			for _, link := range slideLinks {
-				builder.WriteString(fmt.Sprintf("[Slide screenshot](%s)\n\n", link))
-			}
-			text = builder.String()
-		} else {
-			var out []string
-			linkPos := 0
-			for i, line := range lines {
-				out = append(out, line)
-				nextHeading := false
-				for _, idx := range headingIdx[1:] {
-					if i+1 == idx {
-						nextHeading = true
-						break
-					}
-				}
-				lastLine := i == len(lines)-1
-				if (nextHeading || lastLine) && linkPos < len(slideLinks) {
-					if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
-						out = append(out, "")
-					}
-					out = append(out, fmt.Sprintf("[Slide screenshot](%s)", slideLinks[linkPos]), "")
-					linkPos++
-				}
-			}
-			for ; linkPos < len(slideLinks); linkPos++ {
-				out = append(out, fmt.Sprintf("[Slide screenshot](%s)", slideLinks[linkPos]), "")
-			}
-			text = strings.Join(out, "\n")
+		slideLinks = append(slideLinks, filepath.ToSlash(name))
+	}
+	sort.Strings(slideLinks)
+	if len(slideLinks) == 0 {
+		return text
+	}
+
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	var headingIdx []int
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "# ") {
+			headingIdx = append(headingIdx, i)
 		}
 	}
-	doc.markdownFile = bytes.NewBufferString(text)
-	mdApplyMetaDataFrontmatter(doc)
-	zipName, err := markdownZipFileName(mdFileName(doc.metaData))
+	if len(headingIdx) == 0 {
+		var builder strings.Builder
+		builder.WriteString(strings.TrimRight(text, "\n"))
+		builder.WriteString("\n\n")
+		for _, link := range slideLinks {
+			builder.WriteString(fmt.Sprintf("[Slide screenshot](%s)\n\n", link))
+		}
+		return builder.String()
+	}
+
+	var out []string
+	linkPos := 0
+	for i, line := range lines {
+		out = append(out, line)
+		nextHeading := false
+		for _, idx := range headingIdx[1:] {
+			if i+1 == idx {
+				nextHeading = true
+				break
+			}
+		}
+		lastLine := i == len(lines)-1
+		if (nextHeading || lastLine) && linkPos < len(slideLinks) {
+			if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
+				out = append(out, "")
+			}
+			out = append(out, fmt.Sprintf("[Slide screenshot](%s)", slideLinks[linkPos]), "")
+			linkPos++
+		}
+	}
+	for ; linkPos < len(slideLinks); linkPos++ {
+		out = append(out, fmt.Sprintf("[Slide screenshot](%s)", slideLinks[linkPos]), "")
+	}
+	return strings.Join(out, "\n")
+}
+
+func pptxSlideScreenshots(ctx context.Context, sourcePath string) (map[string][]byte, error) {
+	screenshotAvailable := false
+	switch runtime.GOOS {
+	case "windows":
+		if err := pptxCommandAvailable("powershell", "pwsh"); err == nil {
+			regCtx, cancel, _ := contextWithToolTimeout(ctx, defaultExternalToolTimeout)
+			cmd := exec.CommandContext(regCtx, "reg", "query", `HKCR\PowerPoint.Application`)
+			screenshotAvailable = cmd.Run() == nil
+			cancel()
+		}
+	case "linux":
+		screenshotAvailable = pptxCommandAvailable("soffice", "libreoffice") == nil
+	default:
+		return nil, fmt.Errorf("%w: PPTX screenshots are not supported on %s", ErrUnsupported, runtime.GOOS)
+	}
+	if !screenshotAvailable {
+		return nil, fmt.Errorf("%w: PPTX screenshots are not available", ErrUnsupported)
+	}
+
+	screensDir, err := os.MkdirTemp("", "pptx-slides-*")
 	if err != nil {
 		return nil, err
 	}
-	doc.fileName = zipName
+	defer func() { _ = os.RemoveAll(screensDir) }()
 
-	return doc, nil
+	if err := pptxExportSlideScreenshots(ctx, sourcePath, screensDir); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(screensDir)
+	if err != nil {
+		return nil, err
+	}
+
+	slides := map[string][]byte{}
+	for _, entry := range entries {
+		if entry.IsDir() || strings.ToLower(filepath.Ext(entry.Name())) != ".png" {
+			continue
+		}
+		slidePath := filepath.Join(screensDir, entry.Name())
+		slideBody, err := os.ReadFile(slidePath)
+		if err != nil {
+			return nil, err
+		}
+		slides[filepath.ToSlash(filepath.Join("slides", entry.Name()))] = slideBody
+	}
+	return slides, nil
 }
 
-// pptxExportSlideScreenshots exports slide screenshots for a PPTX into outputDir.
-//
-// OS support:
-//   - Windows: PowerPoint COM automation (via PowerShell).
-//   - Linux: LibreOffice headless conversion.
-//   - Other OSes: returns an error.
 func pptxExportSlideScreenshots(ctx context.Context, sourcePath, outputDir string) error {
 	ctx = contextOrBackground(ctx)
 	if err := ctx.Err(); err != nil {
