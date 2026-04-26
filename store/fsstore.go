@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"docpipe/internal/pathutil"
+	"github.com/archeopternix/docpipe/internal/pathutil"
 )
 
 type FS struct {

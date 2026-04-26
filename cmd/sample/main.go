@@ -3,14 +3,15 @@ package main
 import (
 	"archive/zip"
 	"context"
-	"docpipe"
-	"docpipe/ai"
-	dpstore "docpipe/store"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/archeopternix/docpipe"
+	"github.com/archeopternix/docpipe/ai"
+	dpstore "github.com/archeopternix/docpipe/store"
 )
 
 func main() {

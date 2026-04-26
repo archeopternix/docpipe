@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"docpipe/store"
+	"github.com/archeopternix/docpipe/store"
 )
 
 // Service provides high-level document operations backed by a store (read/write markdown, assets, import/export).

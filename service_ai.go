@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"docpipe/ai"
-	"docpipe/clean"
+	"github.com/archeopternix/docpipe/ai"
+	"github.com/archeopternix/docpipe/clean"
 )
 
 func (s Service) Clean(ctx context.Context, doc Document, opt clean.Options, upd UpdateOptions) error {

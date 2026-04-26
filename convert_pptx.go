@@ -13,7 +13,7 @@ import (
 	"sort"
 	"strings"
 
-	"docpipe/clean"
+	"github.com/archeopternix/docpipe/clean"
 )
 
 func convertPptx(ctx context.Context, sourcePath string, src ImportSource, opt PptxOptions) (importedDocument, error) {

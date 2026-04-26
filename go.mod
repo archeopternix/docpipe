@@ -1,4 +1,4 @@
-module docpipe
+module github.com/archeopternix/docpipe
 
 go 1.25.0
 

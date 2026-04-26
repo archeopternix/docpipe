@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"docpipe/clean"
+	"github.com/archeopternix/docpipe/clean"
 )
 
 func convertDocx(ctx context.Context, path string, src ImportSource, opt WordOptions) (importedDocument, error) {
