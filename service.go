@@ -18,6 +18,7 @@ import (
 	"docpipe/store"
 )
 
+// Service provides high-level document operations backed by a store (read/write markdown, assets, import/export).
 type Service struct {
 	Store store.Store
 	Paths Paths
@@ -30,10 +31,12 @@ type Service struct {
 	}
 }
 
+// Document identifies a document managed by Service.
 type Document struct {
 	ID string
 }
 
+// Paths configures where a document's files live inside the store.
 type Paths struct {
 	RootMarkdown string
 	MediaDir     string
@@ -41,29 +44,35 @@ type Paths struct {
 	VersionsDir  string
 }
 
+// UpdateOptions controls behavior when updating markdown/frontmatter.
 type UpdateOptions struct {
-	ArchivePrevious bool
-	BumpVersion     bool
-	Now             func() time.Time
+	ArchivePrevious bool             // if true, save current root.md into VersionsDir before overwriting
+	BumpVersion     bool             // if true, bump frontmatter version + update ChangedDate
+	Now             func() time.Time // optional clock (UTC is enforced)
 }
 
+// ImportSource describes a file to import.
 type ImportSource struct {
-	Reader   io.Reader
-	Name     string
-	Size     int64
-	MimeType string
-	ModTime  time.Time
+	Reader   io.Reader // content stream
+	Name     string    // filename (used to infer extension/frontmatter defaults)
+	Size     int64     // size hint (used for zip staging/limits)
+	MimeType string    // optional MIME type (used when Name has no extension)
+	ModTime  time.Time // optional timestamp used for default dates
 }
 
+// WordOptions configures DOCX import.
 type WordOptions struct {
 	IncludeImages bool
 }
 
+// PptxOptions configures PPTX import.
 type PptxOptions struct {
 	IncludeImages bool
 	IncludeSlides bool
 }
 
+// NewService creates a Service with sensible import defaults.
+// Parameter: st is the backing store (must be non-nil when calling methods).
 func NewService(st store.Store) Service {
 	s := Service{Store: st}
 	s.Import.IncludeImages = true
@@ -72,6 +81,12 @@ func NewService(st store.Store) Service {
 	return s
 }
 
+// DefaultPaths returns the default store layout
+//
+//		root.md - the main markdown document
+//		media/ - keeps all the images embedded in pptx or docx
+//	 slides/ - screenshots of pptx slides
+//	 versions/ - old versions of markdown files
 func DefaultPaths() Paths {
 	return Paths{
 		RootMarkdown: "root.md",
@@ -81,10 +96,12 @@ func DefaultPaths() Paths {
 	}
 }
 
+// Doc returns a Document handle for id (whitespace-trimmed).
 func (s Service) Doc(id string) Document {
 	return Document{ID: strings.TrimSpace(id)}
 }
 
+// ReadMarkdown loads the document's main markdown file (root.md).
 func (s Service) ReadMarkdown(ctx context.Context, doc Document) (string, error) {
 	body, err := s.readFile(ctx, doc, s.paths().RootMarkdown)
 	if err != nil {
@@ -93,22 +110,30 @@ func (s Service) ReadMarkdown(ctx context.Context, doc Document) (string, error)
 	return string(body), nil
 }
 
+// ListMedia lists stored media asset paths under MediaDir (sorted). Returns nil if none.
 func (s Service) ListMedia(ctx context.Context, doc Document) ([]string, error) {
 	return s.listNames(ctx, doc, s.paths().MediaDir)
 }
 
+// OpenMedia opens a media asset by name.
+// Parameter: name may be relative; it is cleaned/validated to stay within MediaDir.
 func (s Service) OpenMedia(ctx context.Context, doc Document, name string) (fs.File, error) {
 	return s.openAsset(ctx, doc, s.paths().MediaDir, name)
 }
 
+// ListSlides lists stored slide asset paths under SlidesDir (sorted). Returns nil if none.
 func (s Service) ListSlides(ctx context.Context, doc Document) ([]string, error) {
 	return s.listNames(ctx, doc, s.paths().SlidesDir)
 }
 
+// OpenSlide opens a slide asset by name.
+// Parameter: name may be relative; it is cleaned/validated to stay within SlidesDir.
 func (s Service) OpenSlide(ctx context.Context, doc Document, name string) (fs.File, error) {
 	return s.openAsset(ctx, doc, s.paths().SlidesDir, name)
 }
 
+// WriteMarkdown writes root markdown, optionally archiving the previous version and/or bumping frontmatter version.
+// Parameters: root is the new markdown; opt controls archiving/version bump behavior.
 func (s Service) WriteMarkdown(ctx context.Context, doc Document, root string, opt UpdateOptions) error {
 	if err := s.ensureService(doc); err != nil {
 		return err
@@ -131,6 +156,8 @@ func (s Service) WriteMarkdown(ctx context.Context, doc Document, root string, o
 	return s.Store.WriteFile(ctx, doc.ID, s.paths().RootMarkdown, []byte(finalRoot), 0o644)
 }
 
+// UpdateFrontmatter updates only the frontmatter fields provided in fm (missing fields keep current values).
+// Parameters: fm is merged into existing frontmatter; opt is passed through to WriteMarkdown.
 func (s Service) UpdateFrontmatter(ctx context.Context, doc Document, fm Frontmatter, opt UpdateOptions) error {
 	current, err := s.ReadMarkdown(ctx, doc)
 	if err != nil {
@@ -144,6 +171,8 @@ func (s Service) UpdateFrontmatter(ctx context.Context, doc Document, fm Frontma
 	return s.WriteMarkdown(ctx, doc, mdComposeMarkdownWithMeta(fm, StripFrontmatter(current)), opt)
 }
 
+// ImportDocument creates a new document and imports content from src.
+// Parameter: src.Name/src.MimeType determine the format (.docx/.pptx/.md/.zip).
 func (s Service) ImportDocument(ctx context.Context, src ImportSource) (Document, error) {
 	if err := s.ensureStoreOnly(); err != nil {
 		return Document{}, err
@@ -185,6 +214,8 @@ func (s Service) ImportDocument(ctx context.Context, src ImportSource) (Document
 	return doc, nil
 }
 
+// ImportZip creates a new document by importing a docpipe zip.
+// Parameters: r/size must describe the full zip content.
 func (s Service) ImportZip(ctx context.Context, r io.ReaderAt, size int64) (Document, error) {
 	if err := s.ensureStoreOnly(); err != nil {
 		return Document{}, err
@@ -200,6 +231,8 @@ func (s Service) ImportZip(ctx context.Context, r io.ReaderAt, size int64) (Docu
 	return doc, nil
 }
 
+// ImportZipInto imports a docpipe zip into an existing document, replacing current contents.
+// Parameters: doc selects the target; r/size must describe the full zip content.
 func (s Service) ImportZipInto(ctx context.Context, doc Document, r io.ReaderAt, size int64) error {
 	if err := s.ensureService(doc); err != nil {
 		return err
@@ -260,6 +293,7 @@ func (s Service) ImportZipInto(ctx context.Context, doc Document, r io.ReaderAt,
 	return nil
 }
 
+// ExportZip writes a docpipe zip for doc into w (root.md + media/slides/versions when present).
 func (s Service) ExportZip(ctx context.Context, doc Document, w *zip.Writer) error {
 	if err := s.ensureService(doc); err != nil {
 		return err

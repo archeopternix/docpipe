@@ -1,4 +1,12 @@
-// Package docpipe converts Office documents and markdown into a store-backed
+// Package docpipe is intended to be used as library that provides the foundation for full blown
+// document management systems. For this purpose it provides functions to render the content as
+// HTML including, images and screenshots of slides. It takes different formats:
+//
+//   - Word (.docx)
+//   - PowerPoint (.pptx)
+//   - Text + Markdown
+//
+// and converts them into markdown which is stored by "Service"  into a store-backed
 // document layout with ZIP import/export helpers.
 //
 // # Overview
@@ -6,10 +14,10 @@
 // The preferred runtime API is Service, which owns a Store implementation and
 // persists documents by ID using a canonical layout:
 //
-//   - root.md
-//   - media/*
-//   - slides/*
-//   - versions/*
+//   - /root.md                         Root markdown file (with YAML frontmatter)
+//   - /media/*                         Extracted images (optional)
+//   - /slides/*                        Slide screenshots (optional, PPTX only)
+//   - /versions/*                      Archived prior markdown versions (optional)
 //
 // Documents can be imported through Service.ImportDocument or Service.ImportZip,
 // mutated by ID, rendered, and exported with Service.ExportZip. ZIP handling is
@@ -17,13 +25,7 @@
 //
 // # Output format (ZIP layout)
 //
-// When exporting a stored document with Service.ExportZip,
-// entries are written using the following layout:
-//
-//   - /root.md                         Root markdown file (with YAML frontmatter)
-//   - /media/*                         Extracted images (optional)
-//   - /slides/*                        Slide screenshots (optional, PPTX only)
-//   - /versions/*                      Archived prior markdown versions (optional)
+// Exporting a stored document is done by using Service.ExportZip.
 //
 // # Metadata and file naming
 //
@@ -58,5 +60,4 @@
 // This package is intended to be used as a library; callers typically construct
 // a Service with a filesystem-backed store, import a source document, and then
 // read, mutate, render, or export the stored document by ID.
-
 package docpipe

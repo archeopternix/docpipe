@@ -15,9 +15,10 @@ var (
 	versionPattern          = regexp.MustCompile(`^\d+(?:\.\d+)*$`)
 )
 
+// datetimelayout is the canonical date-time format used when writing frontmatter dates.
 const datetimelayout = "2006-01-02 15:04:05"
 
-// Frontmatter holds the metadata stored in root.md YAML frontmatter.
+// Frontmatter represents the YAML metadata block at the top of a Markdown document ("--- ... ---").
 type Frontmatter struct {
 	Author           string
 	Title            string
@@ -38,10 +39,12 @@ type mdFileNameParts struct {
 	Version  string
 }
 
+// HasFrontmatter reports whether markdown starts with a YAML frontmatter opener ("---\n").
 func HasFrontmatter(markdown string) bool {
 	return strings.HasPrefix(normalizeMarkdownNewlines(markdown), "---\n")
 }
 
+// StripFrontmatter returns markdown without the leading YAML frontmatter block (if present).
 func StripFrontmatter(markdown string) string {
 	_, body, ok := mdSplitFrontmatterContent(markdown)
 	if !ok {
@@ -50,6 +53,8 @@ func StripFrontmatter(markdown string) string {
 	return body
 }
 
+// ParseFrontmatter parses a leading YAML frontmatter block into Frontmatter.
+// Parameter: markdown is the full document text. Returns zero-value Frontmatter if no frontmatter exists.
 func ParseFrontmatter(markdown string) (Frontmatter, error) {
 	meta, _, err := mdParseFrontmatter(markdown, Frontmatter{})
 	return meta, err

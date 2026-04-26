@@ -7,18 +7,21 @@ import (
 	"unicode"
 )
 
+// RenderOptions controls how markdown is converted to HTML.
 type RenderOptions struct {
-	AnchorifyHeadings bool
-	RewriteImageURLs  func(orig string) (string, bool)
-	SplitSections     bool
+	AnchorifyHeadings bool                             // add stable id="..." attributes to headings
+	RewriteImageURLs  func(orig string) (string, bool) // optional hook to rewrite image src URLs
+	SplitSections     bool                             // if true, render title/frontmatter separately (see Service.RenderHTML)
 }
 
+// Rendered holds HTML output fragments produced by rendering.
 type Rendered struct {
 	TitleHTML       string
 	FrontmatterHTML string
 	BodyHTML        string
 }
 
+// HeadingNode is a nested heading entry (used for table-of-contents style indexes).
 type HeadingNode struct {
 	Level    int
 	Text     string

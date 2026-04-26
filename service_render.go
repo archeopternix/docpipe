@@ -4,6 +4,8 @@ import (
 	"context"
 )
 
+// RenderHTML renders a document's markdown as HTML.
+// Parameters: opt controls rendering (e.g. section splitting, heading anchors). Returns rendered HTML fragments.
 func (s Service) RenderHTML(ctx context.Context, doc Document, opt RenderOptions) (Rendered, error) {
 	root, err := s.ReadMarkdown(ctx, doc)
 	if err != nil {
@@ -25,6 +27,8 @@ func (s Service) RenderHTML(ctx context.Context, doc Document, opt RenderOptions
 	return rendered, nil
 }
 
+// HeadingIndex extracts headings from the document body and returns a nested index tree.
+// Parameter: maxLevel limits headings (defaults to 3; clamped to 1..6).
 func (s Service) HeadingIndex(ctx context.Context, doc Document, maxLevel int) ([]HeadingNode, error) {
 	root, err := s.ReadMarkdown(ctx, doc)
 	if err != nil {
@@ -85,6 +89,7 @@ func (s Service) HeadingIndex(ctx context.Context, doc Document, maxLevel int) (
 	return index, nil
 }
 
+// RenderFrontmatter reads and parses the document frontmatter.
 func (s Service) RenderFrontmatter(ctx context.Context, doc Document) (Frontmatter, error) {
 	root, err := s.ReadMarkdown(ctx, doc)
 	if err != nil {
@@ -97,6 +102,7 @@ func (s Service) RenderFrontmatter(ctx context.Context, doc Document) (Frontmatt
 	return fm, nil
 }
 
+// GetMarkdownBody returns the markdown without frontmatter (i.e. the document body only).
 func (s Service) GetMarkdownBody(ctx context.Context, doc Document) (string, error) {
 	root, err := s.ReadMarkdown(ctx, doc)
 	if err != nil {
@@ -105,6 +111,8 @@ func (s Service) GetMarkdownBody(ctx context.Context, doc Document) (string, err
 	return StripFrontmatter(root), nil
 }
 
+// SetFrontmatter overwrites the document frontmatter while preserving the current markdown body.
+// Parameters: fm becomes the new frontmatter; opt controls archiving/version bump behavior via WriteMarkdown.
 func (s Service) SetFrontmatter(ctx context.Context, doc Document, fm Frontmatter, opt UpdateOptions) error {
 	current, err := s.ReadMarkdown(ctx, doc)
 	if err != nil {
