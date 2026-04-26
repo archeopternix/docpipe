@@ -100,3 +100,7 @@ system calls or external tool invocations.
 Callers typically construct a `Service` with a filesystem-backed store, import a
 source document, and then read, mutate, render, or export the stored document by
 ID.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
