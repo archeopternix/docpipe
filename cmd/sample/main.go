@@ -26,7 +26,11 @@ func main() {
 	}
 	defer in.Close()
 
-	service := docpipe.NewService(dpstore.FS{BasePath: filepath.Join(filepath.Dir(inputPath), "docpipe-store")})
+	search, err := docpipe.NewBleveSearch(filepath.Join(filepath.Dir(inputPath), "bleve-index"))
+	if err != nil {
+		log.Fatalf("NewBleveSearch() error = %v", err)
+	}
+	service := docpipe.NewService(dpstore.FS{BasePath: filepath.Join(filepath.Dir(inputPath), "docpipe-store")}, search)
 	doc, err := service.ImportDocument(context.Background(), docpipe.ImportSource{
 		Reader: in,
 		Name:   filepath.Base(inputPath),

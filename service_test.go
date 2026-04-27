@@ -20,7 +20,11 @@ import (
 func TestServiceImportMarkdownUpdateAndExportZip(t *testing.T) {
 	ctx := context.Background()
 	baseDir := t.TempDir()
-	service := NewService(dpstore.FS{BasePath: baseDir})
+	search, err := NewBleveSearch(baseDir)
+	if err != nil {
+		t.Log(err)
+	}
+	service := NewService(dpstore.FS{BasePath: baseDir}, search)
 
 	doc, err := service.ImportDocument(ctx, ImportSource{
 		Reader: strings.NewReader(sampleMarkdown("Sample", "1.0", "# Body\n")),
@@ -90,7 +94,11 @@ func TestServiceImportMarkdownUpdateAndExportZip(t *testing.T) {
 func TestServiceImportZipAndRender(t *testing.T) {
 	ctx := context.Background()
 	baseDir := t.TempDir()
-	service := NewService(dpstore.FS{BasePath: baseDir})
+	search, err := NewBleveSearch(baseDir)
+	if err != nil {
+		t.Log(err)
+	}
+	service := NewService(dpstore.FS{BasePath: baseDir}, search)
 
 	zipBytes := makeTestZip(t, map[string]string{
 		"Sample_en_v1.0.md": sampleMarkdown("Sample", "1.0", "# Intro\n\n![Logo](media/logo.png)\n"),
@@ -138,7 +146,11 @@ func TestServiceImportZipAndRender(t *testing.T) {
 
 func TestServiceOpenAssetRejectsTraversal(t *testing.T) {
 	ctx := context.Background()
-	service := NewService(dpstore.FS{BasePath: t.TempDir()})
+	search, err := NewBleveSearch(t.TempDir())
+	if err != nil {
+		t.Log(err)
+	}
+	service := NewService(dpstore.FS{BasePath: t.TempDir()}, search)
 
 	doc, err := service.ImportDocument(ctx, ImportSource{
 		Reader: strings.NewReader(sampleMarkdown("Sample", "1.0", "# Body\n")),
@@ -158,7 +170,11 @@ func TestServiceOpenAssetRejectsTraversal(t *testing.T) {
 
 func TestServiceDefaultsValidationAndMIMEImport(t *testing.T) {
 	ctx := context.Background()
-	service := NewService(dpstore.FS{BasePath: t.TempDir()})
+	search, err := NewBleveSearch(t.TempDir())
+	if err != nil {
+		t.Log(err)
+	}
+	service := NewService(dpstore.FS{BasePath: t.TempDir()}, search)
 
 	if !service.Import.IncludeImages || !service.Import.IncludeSlides {
 		t.Fatalf("NewService() import flags = %+v, want images and slides enabled", service.Import)
@@ -216,7 +232,11 @@ func TestServiceDefaultsValidationAndMIMEImport(t *testing.T) {
 
 func TestServiceStageImportSource(t *testing.T) {
 	ctx := context.Background()
-	service := NewService(dpstore.FS{BasePath: t.TempDir()})
+	search, err := NewBleveSearch(t.TempDir())
+	if err != nil {
+		t.Log(err)
+	}
+	service := NewService(dpstore.FS{BasePath: t.TempDir()}, search)
 	service.Import.TempDir = t.TempDir()
 	service.Import.MaxBytes = 3
 
@@ -266,7 +286,11 @@ func TestServiceStageImportSource(t *testing.T) {
 
 func TestServicePersistImportedDocumentResetsAndWritesAssets(t *testing.T) {
 	ctx := context.Background()
-	service := NewService(dpstore.FS{BasePath: t.TempDir()})
+	search, err := NewBleveSearch(t.TempDir())
+	if err != nil {
+		t.Log(err)
+	}
+	service := NewService(dpstore.FS{BasePath: t.TempDir()}, search)
 	doc := service.Doc("doc-1")
 
 	if err := service.persistImportedDocument(ctx, doc, importedDocument{
@@ -321,7 +345,11 @@ func TestServicePersistImportedDocumentResetsAndWritesAssets(t *testing.T) {
 
 func TestServiceRenderAccessors(t *testing.T) {
 	ctx := context.Background()
-	service := NewService(dpstore.FS{BasePath: t.TempDir()})
+	search, err := NewBleveSearch(t.TempDir())
+	if err != nil {
+		t.Log(err)
+	}
+	service := NewService(dpstore.FS{BasePath: t.TempDir()}, search)
 	doc := importTestMarkdown(t, service, "outline.md", sampleMarkdown("Outline", "1.0", strings.Join([]string{
 		"# Intro",
 		"",
@@ -383,7 +411,11 @@ func TestServiceRenderAccessors(t *testing.T) {
 
 func TestServiceCleanTranslateAndDetectLanguage(t *testing.T) {
 	ctx := context.Background()
-	service := NewService(dpstore.FS{BasePath: t.TempDir()})
+	search, err := NewBleveSearch(t.TempDir())
+	if err != nil {
+		t.Log(err)
+	}
+	service := NewService(dpstore.FS{BasePath: t.TempDir()}, search)
 	doc := importTestMarkdown(t, service, "clean.md", sampleMarkdown("Clean", "1.0", "![Alt](folder\\image one.png)\n\nEscaped \\# heading\n"))
 
 	if err := service.Clean(ctx, doc, clean.Options{}, UpdateOptions{}); err != nil {
@@ -442,7 +474,11 @@ func TestServiceCleanTranslateAndDetectLanguage(t *testing.T) {
 
 func TestServiceImportZipValidationAndExportErrors(t *testing.T) {
 	ctx := context.Background()
-	service := NewService(dpstore.FS{BasePath: t.TempDir()})
+	search, err := NewBleveSearch(t.TempDir())
+	if err != nil {
+		t.Log(err)
+	}
+	service := NewService(dpstore.FS{BasePath: t.TempDir()}, search)
 
 	if _, err := service.ImportZip(ctx, nil, 0); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ImportZip(nil reader) error = %v, want ErrInvalidInput", err)

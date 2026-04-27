@@ -75,6 +75,14 @@ func (s FS) Remove(ctx context.Context, docID, name string) error {
 	return nil
 }
 
+func (s FS) ListDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	fullPath := filepath.Join(s.basePath(), filepath.FromSlash(dir))
+	return os.ReadDir(fullPath)
+}
+
 func (s FS) resolveFile(docID, name string) (string, error) {
 	cleanID, err := pathutil.CleanDocID(docID)
 	if err != nil {

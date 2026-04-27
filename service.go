@@ -20,8 +20,9 @@ import (
 
 // Service provides high-level document operations backed by a store (read/write markdown, assets, import/export).
 type Service struct {
-	Store store.Store
-	Paths Paths
+	Store  store.Store
+	Search SearchProvider
+	Paths  Paths
 
 	Import struct {
 		IncludeImages bool
@@ -73,8 +74,8 @@ type PptxOptions struct {
 
 // NewService creates a Service with sensible import defaults.
 // Parameter: st is the backing store (must be non-nil when calling methods).
-func NewService(st store.Store) Service {
-	s := Service{Store: st}
+func NewService(st store.Store, sp SearchProvider) Service {
+	s := Service{Store: st, Search: sp}
 	s.Import.IncludeImages = true
 	s.Import.IncludeSlides = true
 	s.Import.MaxBytes = defaultMaxZipEntryReadBytes
@@ -332,6 +333,27 @@ func (s Service) ExportZip(ctx context.Context, doc Document, w *zip.Writer) err
 		}
 	}
 	return nil
+}
+
+// ListDir lists entries under the docpipe store "root" directory (or a subdir) where
+// parameter dir is optional and interpreted as follows:
+// - "" or "." => list the store root
+// - "some/subdir" => list that subdir under the store root (unless you decide dir is already absolute in store terms)
+func (s Service) ListDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
+	if s.Store == nil {
+		return nil, ErrInvalidInput
+	}
+
+	dir = strings.TrimSpace(dir)
+	if dir == "" || dir == "." {
+		// Convention: store root. Adjust if your store expects a non-empty path.
+		dir = "."
+	} else {
+		// Normalize for safety; prevents odd inputs like "a/../b".
+		dir = filepath.Clean(filepath.FromSlash(dir))
+	}
+
+	return s.Store.ListDir(ctx, dir)
 }
 
 func (s Service) importExtensionFromMime(mimeType string) string {

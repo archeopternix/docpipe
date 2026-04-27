@@ -12,7 +12,6 @@ import (
 const (
 	defaultExternalToolTimeout     = time.Minute
 	defaultScreenshotToolTimeout   = 2 * time.Minute
-	defaultOpenAIHTTPTimeout       = 2 * time.Minute
 	defaultMaxZipEntryReadBytes    = int64(512 << 20)
 	defaultCommandErrorSnippetSize = 4096
 )
