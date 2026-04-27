@@ -38,6 +38,8 @@ API:
 - `Service.UpdateFrontmatter`
 - `Service.Clean`
 - `Service.ExportZip`
+- `Service.ListDir`
+
 
 ZIP handling is limited to import and export. Runtime documents are backed by
 the configured store.
