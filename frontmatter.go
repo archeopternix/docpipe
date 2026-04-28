@@ -40,12 +40,12 @@ type mdFileNameParts struct {
 }
 
 // HasFrontmatter reports whether markdown starts with a YAML frontmatter opener ("---\n").
-func HasFrontmatter(markdown string) bool {
+func hasFrontmatter(markdown string) bool {
 	return strings.HasPrefix(normalizeMarkdownNewlines(markdown), "---\n")
 }
 
 // StripFrontmatter returns markdown without the leading YAML frontmatter block (if present).
-func StripFrontmatter(markdown string) string {
+func stripFrontmatter(markdown string) string {
 	_, body, ok := mdSplitFrontmatterContent(markdown)
 	if !ok {
 		return normalizeMarkdownNewlines(markdown)
@@ -55,7 +55,7 @@ func StripFrontmatter(markdown string) string {
 
 // ParseFrontmatter parses a leading YAML frontmatter block into Frontmatter.
 // Parameter: markdown is the full document text. Returns zero-value Frontmatter if no frontmatter exists.
-func ParseFrontmatter(markdown string) (Frontmatter, error) {
+func parseFrontmatter(markdown string) (Frontmatter, error) {
 	meta, _, err := mdParseFrontmatter(markdown, Frontmatter{})
 	return meta, err
 }

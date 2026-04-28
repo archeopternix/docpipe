@@ -7,15 +7,15 @@ import (
 // RenderHTML renders a document's markdown as HTML.
 // Parameters: opt controls rendering (e.g. section splitting, heading anchors). Returns rendered HTML fragments.
 func (s Service) RenderHTML(ctx context.Context, doc Document, opt RenderOptions) (Rendered, error) {
-	root, err := s.ReadMarkdown(ctx, doc)
+
+	parts, err := s.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		return Rendered{}, err
 	}
-	fm, err := ParseFrontmatter(root)
-	if err != nil {
-		return Rendered{}, err
-	}
-	bodyHTML, err := markdownRenderHTML(StripFrontmatter(root), opt)
+
+	fm := parts.Frontmatter
+
+	bodyHTML, err := markdownRenderHTML(parts.Body, opt)
 	if err != nil {
 		return Rendered{}, err
 	}
@@ -30,11 +30,12 @@ func (s Service) RenderHTML(ctx context.Context, doc Document, opt RenderOptions
 // HeadingIndex extracts headings from the document body and returns a nested index tree.
 // Parameter: maxLevel limits headings (defaults to 3; clamped to 1..6).
 func (s Service) HeadingIndex(ctx context.Context, doc Document, maxLevel int) ([]HeadingNode, error) {
-	root, err := s.ReadMarkdown(ctx, doc)
+	parts, err := s.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		return nil, err
 	}
-	body := StripFrontmatter(root)
+
+	body := parts.Body
 	if maxLevel <= 0 {
 		maxLevel = 3
 	}
@@ -89,34 +90,13 @@ func (s Service) HeadingIndex(ctx context.Context, doc Document, maxLevel int) (
 	return index, nil
 }
 
-// RenderFrontmatter reads and parses the document frontmatter.
-func (s Service) RenderFrontmatter(ctx context.Context, doc Document) (Frontmatter, error) {
-	root, err := s.ReadMarkdown(ctx, doc)
-	if err != nil {
-		return Frontmatter{}, err
-	}
-	fm, err := ParseFrontmatter(root)
-	if err != nil {
-		return Frontmatter{}, err
-	}
-	return fm, nil
-}
-
-// GetMarkdownBody returns the markdown without frontmatter (i.e. the document body only).
-func (s Service) GetMarkdownBody(ctx context.Context, doc Document) (string, error) {
-	root, err := s.ReadMarkdown(ctx, doc)
-	if err != nil {
-		return "", err
-	}
-	return StripFrontmatter(root), nil
-}
-
 // SetFrontmatter overwrites the document frontmatter while preserving the current markdown body.
 // Parameters: fm becomes the new frontmatter; opt controls archiving/version bump behavior via WriteMarkdown.
 func (s Service) SetFrontmatter(ctx context.Context, doc Document, fm Frontmatter, opt UpdateOptions) error {
-	current, err := s.ReadMarkdown(ctx, doc)
+	parts, err := s.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		return err
 	}
-	return s.WriteMarkdown(ctx, doc, mdComposeMarkdownWithMeta(fm, StripFrontmatter(current)), opt)
+
+	return s.WriteMarkdown(ctx, doc, mdComposeMarkdownWithMeta(fm, parts.Body), opt)
 }

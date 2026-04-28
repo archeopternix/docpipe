@@ -15,13 +15,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/archeopternix/docpipe/search"
 	"github.com/archeopternix/docpipe/store"
 )
 
 // Service provides high-level document operations backed by a store (read/write markdown, assets, import/export).
 type Service struct {
 	Store  store.Store
-	Search SearchProvider
+	Search search.SearchProvider
 	Paths  Paths
 
 	Import struct {
@@ -75,7 +76,7 @@ type PptxOptions struct {
 
 // NewService creates a Service with sensible import defaults.
 // Parameter: st is the backing store (must be non-nil when calling methods).
-func NewService(st store.Store, sp SearchProvider) Service {
+func NewService(st store.Store, sp search.SearchProvider) Service {
 	s := Service{Store: st, Search: sp}
 	s.Import.IncludeImages = true
 	s.Import.IncludeSlides = true
@@ -99,18 +100,37 @@ func DefaultPaths() Paths {
 	}
 }
 
+// Markdown
+type Markdown struct {
+	Full           string // full root.md
+	Body           string // without frontmatter
+	Frontmatter    Frontmatter
+	HasFrontmatter bool
+}
+
 // Doc returns a Document handle for id (whitespace-trimmed).
 func (s Service) Doc(id string) Document {
 	return Document{ID: strings.TrimSpace(id)}
 }
 
-// ReadMarkdown loads the document's main markdown file (root.md).
-func (s Service) ReadMarkdown(ctx context.Context, doc Document) (string, error) {
-	body, err := s.readFile(ctx, doc, s.paths().RootMarkdown)
+func (s Service) ReadMarkdownParts(ctx context.Context, doc Document) (Markdown, error) {
+	fb, err := s.readFile(ctx, doc, s.paths().RootMarkdown)
 	if err != nil {
-		return "", err
+		return Markdown{}, err
 	}
-	return string(body), nil
+	fullbody := string(fb)
+
+	fm, err := parseFrontmatter(fullbody)
+	if err != nil {
+		fm = Frontmatter{}
+	}
+
+	return Markdown{
+		Full:           fullbody,
+		Body:           stripFrontmatter(fullbody),
+		Frontmatter:    fm,
+		HasFrontmatter: hasFrontmatter(fullbody),
+	}, nil
 }
 
 // ListMedia lists stored media asset paths under MediaDir (sorted). Returns nil if none.
@@ -142,17 +162,19 @@ func (s Service) WriteMarkdown(ctx context.Context, doc Document, root string, o
 		return err
 	}
 
-	current, exists, err := s.readMarkdownIfExists(ctx, doc)
+	parts, err := s.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		return err
 	}
-	if exists && opt.ArchivePrevious {
-		if err := s.archiveMarkdown(ctx, doc, current, opt); err != nil {
+
+	// archive the "old" markdown
+	if len(parts.Full) > 0 {
+		if err := s.archiveMarkdown(ctx, doc, parts.Full, opt); err != nil {
 			return err
 		}
 	}
 
-	finalRoot, err := s.prepareMarkdown(root, current, opt)
+	finalRoot, err := s.prepareMarkdown(root, parts.Full, opt)
 	if err != nil {
 		return err
 	}
@@ -162,16 +184,13 @@ func (s Service) WriteMarkdown(ctx context.Context, doc Document, root string, o
 // UpdateFrontmatter updates only the frontmatter fields provided in fm (missing fields keep current values).
 // Parameters: fm is merged into existing frontmatter; opt is passed through to WriteMarkdown.
 func (s Service) UpdateFrontmatter(ctx context.Context, doc Document, fm Frontmatter, opt UpdateOptions) error {
-	current, err := s.ReadMarkdown(ctx, doc)
+	parts, err := s.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		return err
 	}
-	currentFM, err := ParseFrontmatter(current)
-	if err != nil {
-		return err
-	}
-	fm = mdMergeFrontmatter(fm, currentFM)
-	return s.WriteMarkdown(ctx, doc, mdComposeMarkdownWithMeta(fm, StripFrontmatter(current)), opt)
+	parts.Frontmatter = mdMergeFrontmatter(fm, parts.Frontmatter)
+
+	return s.WriteMarkdown(ctx, doc, mdComposeMarkdownWithMeta(parts.Frontmatter, parts.Body), opt)
 }
 
 // ImportDocument creates a new document and imports content from src.
@@ -309,14 +328,12 @@ func (s Service) ExportZip(ctx context.Context, doc Document, w *zip.Writer) err
 		return fmt.Errorf("%w: zip writer is nil", ErrInvalidInput)
 	}
 
-	root, err := s.ReadMarkdown(ctx, doc)
+	// write markdown to zip
+	parts, err := s.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		return err
 	}
-	if _, err := ParseFrontmatter(root); err != nil {
-		return err
-	}
-	if err := markdownWriteZipEntry(w, s.paths().RootMarkdown, []byte(root)); err != nil {
+	if err := markdownWriteZipEntry(w, s.paths().RootMarkdown, []byte(parts.Full)); err != nil {
 		return err
 	}
 
@@ -440,6 +457,7 @@ func (s Service) readFile(ctx context.Context, doc Document, name string) ([]byt
 	return io.ReadAll(file)
 }
 
+/*
 func (s Service) readMarkdownIfExists(ctx context.Context, doc Document) (string, bool, error) {
 	body, err := s.readFile(ctx, doc, s.paths().RootMarkdown)
 	if err != nil {
@@ -450,6 +468,7 @@ func (s Service) readMarkdownIfExists(ctx context.Context, doc Document) (string
 	}
 	return string(body), true, nil
 }
+*/
 
 func (s Service) openAsset(ctx context.Context, doc Document, dir, name string) (fs.File, error) {
 	rawName := strings.TrimSpace(strings.ReplaceAll(name, "\\", "/"))
@@ -517,11 +536,12 @@ func (s Service) prepareMarkdown(root, current string, opt UpdateOptions) (strin
 	}
 
 	now := s.now(opt)
-	fm, err := ParseFrontmatter(root)
+
+	fm, err := parseFrontmatter(root)
 	if err != nil {
 		return "", err
 	}
-	currentFM, err := ParseFrontmatter(current)
+	currentFM, err := parseFrontmatter(current)
 	if err != nil {
 		return "", err
 	}
@@ -543,11 +563,11 @@ func (s Service) prepareMarkdown(root, current string, opt UpdateOptions) (strin
 	if fm.OriginalFormat == "" {
 		fm.OriginalFormat = currentFM.OriginalFormat
 	}
-	return mdComposeMarkdownWithMeta(fm, StripFrontmatter(root)), nil
+	return mdComposeMarkdownWithMeta(fm, stripFrontmatter(root)), nil
 }
 
 func (s Service) archiveMarkdown(ctx context.Context, doc Document, current string, opt UpdateOptions) error {
-	fm, err := ParseFrontmatter(current)
+	fm, err := parseFrontmatter(current)
 	if err != nil {
 		return err
 	}

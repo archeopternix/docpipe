@@ -13,14 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/archeopternix/docpipe/clean"
+	"github.com/archeopternix/docpipe/search"
 	dpstore "github.com/archeopternix/docpipe/store"
 )
 
 func TestServiceImportMarkdownUpdateAndExportZip(t *testing.T) {
 	ctx := context.Background()
 	baseDir := t.TempDir()
-	search, err := NewBleveSearch(baseDir)
+	search, err := search.NewBleveSearch(baseDir)
 	if err != nil {
 		t.Log(err)
 	}
@@ -35,18 +35,23 @@ func TestServiceImportMarkdownUpdateAndExportZip(t *testing.T) {
 		t.Fatalf("ImportDocument() error = %v", err)
 	}
 
-	root, err := service.ReadMarkdown(ctx, doc)
+	parts, err := service.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		t.Fatalf("ReadMarkdown() error = %v", err)
 	}
+	root := parts.Full
+
 	if !strings.Contains(root, `title: "Sample"`) {
 		t.Fatalf("ReadMarkdown() missing frontmatter:\n%s", root)
 	}
 
-	fm, err := service.RenderFrontmatter(ctx, doc)
+	parts, err = service.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		t.Fatalf("RenderFrontmatter() error = %v", err)
 	}
+
+	fm := parts.Frontmatter
+
 	fm.Title = "Updated"
 	if err := service.UpdateFrontmatter(ctx, doc, fm, UpdateOptions{
 		ArchivePrevious: true,
@@ -56,10 +61,12 @@ func TestServiceImportMarkdownUpdateAndExportZip(t *testing.T) {
 		t.Fatalf("UpdateFrontmatter() error = %v", err)
 	}
 
-	root, err = service.ReadMarkdown(ctx, doc)
+	parts, err = service.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		t.Fatalf("ReadMarkdown(updated) error = %v", err)
 	}
+	root = parts.Full
+
 	if !strings.Contains(root, `title: "Updated"`) || !strings.Contains(root, `version: "1.1"`) {
 		t.Fatalf("updated root missing expected values:\n%s", root)
 	}
@@ -94,7 +101,7 @@ func TestServiceImportMarkdownUpdateAndExportZip(t *testing.T) {
 func TestServiceImportZipAndRender(t *testing.T) {
 	ctx := context.Background()
 	baseDir := t.TempDir()
-	search, err := NewBleveSearch(baseDir)
+	search, err := search.NewBleveSearch(baseDir)
 	if err != nil {
 		t.Log(err)
 	}
@@ -146,7 +153,7 @@ func TestServiceImportZipAndRender(t *testing.T) {
 
 func TestServiceOpenAssetRejectsTraversal(t *testing.T) {
 	ctx := context.Background()
-	search, err := NewBleveSearch(t.TempDir())
+	search, err := search.NewBleveSearch(t.TempDir())
 	if err != nil {
 		t.Log(err)
 	}
@@ -170,7 +177,7 @@ func TestServiceOpenAssetRejectsTraversal(t *testing.T) {
 
 func TestServiceDefaultsValidationAndMIMEImport(t *testing.T) {
 	ctx := context.Background()
-	search, err := NewBleveSearch(t.TempDir())
+	search, err := search.NewBleveSearch(t.TempDir())
 	if err != nil {
 		t.Log(err)
 	}
@@ -217,10 +224,13 @@ func TestServiceDefaultsValidationAndMIMEImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportDocument(text/markdown MIME) error = %v", err)
 	}
-	root, err := service.ReadMarkdown(ctx, doc)
+
+	parts, err := service.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		t.Fatalf("ReadMarkdown(MIME import) error = %v", err)
 	}
+	root := parts.Full
+
 	if !strings.Contains(root, `title: "upload"`) || !strings.Contains(root, "# Body") {
 		t.Fatalf("MIME import root missing defaults/body:\n%s", root)
 	}
@@ -232,7 +242,7 @@ func TestServiceDefaultsValidationAndMIMEImport(t *testing.T) {
 
 func TestServiceStageImportSource(t *testing.T) {
 	ctx := context.Background()
-	search, err := NewBleveSearch(t.TempDir())
+	search, err := search.NewBleveSearch(t.TempDir())
 	if err != nil {
 		t.Log(err)
 	}
@@ -286,7 +296,7 @@ func TestServiceStageImportSource(t *testing.T) {
 
 func TestServicePersistImportedDocumentResetsAndWritesAssets(t *testing.T) {
 	ctx := context.Background()
-	search, err := NewBleveSearch(t.TempDir())
+	search, err := search.NewBleveSearch(t.TempDir())
 	if err != nil {
 		t.Log(err)
 	}
@@ -345,7 +355,7 @@ func TestServicePersistImportedDocumentResetsAndWritesAssets(t *testing.T) {
 
 func TestServiceRenderAccessors(t *testing.T) {
 	ctx := context.Background()
-	search, err := NewBleveSearch(t.TempDir())
+	search, err := search.NewBleveSearch(t.TempDir())
 	if err != nil {
 		t.Log(err)
 	}
@@ -382,28 +392,36 @@ func TestServiceRenderAccessors(t *testing.T) {
 		t.Fatalf("HeadingIndex()[1] = %+v, want duplicate intro anchor", index[1])
 	}
 
-	body, err := service.GetMarkdownBody(ctx, doc)
+	parts, err := service.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		t.Fatalf("GetMarkdownBody() error = %v", err)
 	}
-	if HasFrontmatter(body) || !strings.Contains(body, "# Intro") {
+	body := parts.Body
+
+	if hasFrontmatter(body) || !strings.Contains(body, "# Intro") {
 		t.Fatalf("GetMarkdownBody() = %q, want body without frontmatter", body)
 	}
 
 	if err := service.SetFrontmatter(ctx, doc, Frontmatter{Title: "Replacement", Version: "2.0", Language: "de"}, UpdateOptions{}); err != nil {
 		t.Fatalf("SetFrontmatter() error = %v", err)
 	}
-	fm, err := service.RenderFrontmatter(ctx, doc)
+
+	parts, err = service.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		t.Fatalf("RenderFrontmatter() error = %v", err)
 	}
+	fm := parts.Frontmatter
+
 	if fm.Title != "Replacement" || fm.Version != "2.0" || fm.Language != "de" {
 		t.Fatalf("RenderFrontmatter() = %+v, want replacement metadata", fm)
 	}
-	body, err = service.GetMarkdownBody(ctx, doc)
+
+	parts, err = service.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		t.Fatalf("GetMarkdownBody(after SetFrontmatter) error = %v", err)
 	}
+	body = parts.Body
+
 	if !strings.Contains(body, "## Details") {
 		t.Fatalf("SetFrontmatter() did not preserve body:\n%s", body)
 	}
@@ -411,20 +429,23 @@ func TestServiceRenderAccessors(t *testing.T) {
 
 func TestServiceCleanTranslateAndDetectLanguage(t *testing.T) {
 	ctx := context.Background()
-	search, err := NewBleveSearch(t.TempDir())
+	search, err := search.NewBleveSearch(t.TempDir())
 	if err != nil {
 		t.Log(err)
 	}
 	service := NewService(dpstore.FS{BasePath: t.TempDir()}, search)
 	doc := importTestMarkdown(t, service, "clean.md", sampleMarkdown("Clean", "1.0", "![Alt](folder\\image one.png)\n\nEscaped \\# heading\n"))
 
-	if err := service.Clean(ctx, doc, clean.Options{}, UpdateOptions{}); err != nil {
+	if err := service.Clean(ctx, doc, UpdateOptions{}); err != nil {
 		t.Fatalf("Clean() error = %v", err)
 	}
-	root, err := service.ReadMarkdown(ctx, doc)
+
+	parts, err := service.ReadMarkdownParts(ctx, doc)
 	if err != nil {
-		t.Fatalf("ReadMarkdown(cleaned) error = %v", err)
+		t.Fatalf("ReadMarkdown(translated) error = %v", err)
 	}
+	root := parts.Full
+
 	if !strings.Contains(root, "![Alt](/media/image_one.png)") || !strings.Contains(root, "Escaped # heading") {
 		t.Fatalf("Clean() root missing normalized content:\n%s", root)
 	}
@@ -437,15 +458,18 @@ func TestServiceCleanTranslateAndDetectLanguage(t *testing.T) {
 	if len(translator.instructions) != 1 || !strings.Contains(translator.instructions[0], "natural idiomatic phrasing") || !strings.Contains(translator.instructions[0], "german") {
 		t.Fatalf("Translate() instruction = %#v, want rephrase German instruction", translator.instructions)
 	}
-	root, err = service.ReadMarkdown(ctx, doc)
+
+	parts, err = service.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		t.Fatalf("ReadMarkdown(translated) error = %v", err)
 	}
-	fm, err := ParseFrontmatter(root)
+	root = parts.Full
+
+	fm, err := parseFrontmatter(root)
 	if err != nil {
 		t.Fatalf("ParseFrontmatter(translated) error = %v", err)
 	}
-	if fm.Title != "Ubersetzt" || fm.Language != "de" || !strings.Contains(StripFrontmatter(root), "# Hallo") {
+	if fm.Title != "Ubersetzt" || fm.Language != "de" || !strings.Contains(stripFrontmatter(root), "# Hallo") {
 		t.Fatalf("Translate() root/frontmatter = %+v\n%s", fm, root)
 	}
 
@@ -474,7 +498,7 @@ func TestServiceCleanTranslateAndDetectLanguage(t *testing.T) {
 
 func TestServiceImportZipValidationAndExportErrors(t *testing.T) {
 	ctx := context.Background()
-	search, err := NewBleveSearch(t.TempDir())
+	search, err := search.NewBleveSearch(t.TempDir())
 	if err != nil {
 		t.Log(err)
 	}

@@ -7,22 +7,19 @@ import (
 	"strings"
 
 	"github.com/archeopternix/docpipe/ai"
+	tools "github.com/archeopternix/docpipe/internal/tools"
 )
 
 func (s Service) Clean(ctx context.Context, doc Document, upd UpdateOptions) error {
-	root, err := s.ReadMarkdown(ctx, doc)
+
+	parts, err := s.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		return err
 	}
 
-	fm, err := ParseFrontmatter(root)
-	if err != nil {
-		return err
-	}
+	optmized := txtToMarkdown(parts.Body)
 
-	optmized := txtToMarkdown(StripFrontmatter(root))
-
-	return s.WriteMarkdown(ctx, doc, mdComposeMarkdownWithMeta(fm, optmized), upd)
+	return s.WriteMarkdown(ctx, doc, mdComposeMarkdownWithMeta(parts.Frontmatter, optmized), upd)
 }
 
 // txtToMarkdown formats unstructured text into structured Markdown.
@@ -33,7 +30,7 @@ func (s Service) Clean(ctx context.Context, doc Document, upd UpdateOptions) err
 // - Lines that look like list items become "- ..."
 // - Ensures blank lines around headings and list blocks
 func txtToMarkdown(input string) string {
-	s := normalizeNewlines(input)
+	s := tools.NormalizeNewlines(input)
 	lines := splitAndTrimRight(s)
 
 	// Remove leading/trailing empty lines
@@ -236,8 +233,6 @@ func toBullet(line string) (string, bool) {
 		return "", false
 	}
 	return "- " + item, true
-
-	return "-", true
 }
 
 func cleanupInline(s string) string {
@@ -271,10 +266,11 @@ func (s Service) Translate(ctx context.Context, doc Document, client ai.Client, 
 		return fmt.Errorf("%w: target language is missing", ErrInvalidInput)
 	}
 
-	root, err := s.ReadMarkdown(ctx, doc)
+	parts, err := s.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		return err
 	}
+	root := parts.Full
 
 	instruction := fmt.Sprintf(
 		`Translate this markdown document to %s. Preserve markdown structure, YAML frontmatter keys, links, image paths, code blocks, tables, and all factual content. Return only the translated markdown.`,
@@ -292,27 +288,26 @@ func (s Service) Translate(ctx context.Context, doc Document, client ai.Client, 
 		return err
 	}
 
-	currentFM, err := ParseFrontmatter(root)
+	translatedFM, err := parseFrontmatter(translated)
 	if err != nil {
 		return err
 	}
-	translatedFM, err := ParseFrontmatter(translated)
-	if err != nil {
-		return err
-	}
-	fm := mdMergeFrontmatter(translatedFM, currentFM)
+	fm := mdMergeFrontmatter(translatedFM, parts.Frontmatter)
 	fm.Language = mdNormalizeLanguageCode(targetLang)
-	return s.WriteMarkdown(ctx, doc, mdComposeMarkdownWithMeta(fm, StripFrontmatter(translated)), upd)
+	return s.WriteMarkdown(ctx, doc, mdComposeMarkdownWithMeta(fm, stripFrontmatter(translated)), upd)
 }
 
 func (s Service) DetectLanguage(ctx context.Context, doc Document, client ai.Client) (string, error) {
 	if client == nil {
 		return "", fmt.Errorf("%w: ai client is nil", ErrAIUnavailable)
 	}
-	root, err := s.ReadMarkdown(ctx, doc)
+
+	parts, err := s.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		return "", err
 	}
+	root := parts.Full
+
 	text, err := client.Generate(ctx,
 		`Detect the primary language of the markdown document. Return only the ISO 639-1 language code in lowercase, for example "de" or "en".`,
 		root,

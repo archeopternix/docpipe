@@ -1,6 +1,8 @@
-package docpipe
+package search
 
-import "context"
+import (
+	"context"
+)
 
 type SearchProvider interface {
 	Upsert(ctx context.Context, doc SearchDocument) error

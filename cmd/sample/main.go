@@ -10,6 +10,7 @@ import (
 
 	"github.com/archeopternix/docpipe"
 	"github.com/archeopternix/docpipe/ai"
+	"github.com/archeopternix/docpipe/search"
 	dpstore "github.com/archeopternix/docpipe/store"
 )
 
@@ -25,7 +26,7 @@ func main() {
 	}
 	defer in.Close()
 
-	search, err := docpipe.NewBleveSearch(filepath.Join(filepath.Dir(inputPath), "bleve-index"))
+	search, err := search.NewBleveSearch(filepath.Join(filepath.Dir(inputPath), "bleve-index"))
 	if err != nil {
 		log.Fatalf("NewBleveSearch() error = %v", err)
 	}

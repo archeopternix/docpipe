@@ -18,7 +18,7 @@ func convertMarkdownFile(path string, src ImportSource) (importedDocument, error
 	}
 	meta = mdEnsureFrontmatterDefaults(meta, src.Name, src.ModTime)
 
-	root := mdComposeMarkdownWithMeta(meta, StripFrontmatter(string(body)))
+	root := mdComposeMarkdownWithMeta(meta, stripFrontmatter(string(body)))
 
 	return importedDocument{Root: []byte(root), Original: body}, nil
 }

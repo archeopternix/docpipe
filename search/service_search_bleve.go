@@ -1,4 +1,4 @@
-package docpipe
+package search
 
 import (
 	"context"
@@ -24,7 +24,7 @@ type BleveSearch struct {
 func NewBleveSearch(indexPath string) (*BleveSearch, error) {
 	indexPath = strings.TrimSpace(indexPath)
 	if indexPath == "" {
-		return nil, fmt.Errorf("%w: indexPath required", ErrInvalidInput)
+		return nil, fmt.Errorf("%w: indexPath must no be empty")
 	}
 	if err := os.MkdirAll(filepath.Dir(indexPath), 0o755); err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func (b *BleveSearch) Upsert(ctx context.Context, doc SearchDocument) error {
 	_ = ctx // bleve does not accept context; caller can enforce timeouts outside.
 
 	if strings.TrimSpace(doc.ID) == "" {
-		return fmt.Errorf("%w: missing doc.ID", ErrInvalidInput)
+		return fmt.Errorf("%w: missing doc.ID")
 	}
 
 	b.mu.Lock()
@@ -115,7 +115,7 @@ func (b *BleveSearch) Delete(ctx context.Context, id string) error {
 	_ = ctx
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return fmt.Errorf("%w: missing id", ErrInvalidInput)
+		return fmt.Errorf("%w: missing document id: ", id)
 	}
 
 	b.mu.Lock()
