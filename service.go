@@ -43,6 +43,7 @@ type Paths struct {
 	MediaDir     string
 	SlidesDir    string
 	VersionsDir  string
+	OriginalDir  string
 }
 
 // UpdateOptions controls behavior when updating markdown/frontmatter.
@@ -94,6 +95,7 @@ func DefaultPaths() Paths {
 		MediaDir:     "media",
 		SlidesDir:    "slides",
 		VersionsDir:  "versions",
+		OriginalDir:  "original",
 	}
 }
 
@@ -189,15 +191,19 @@ func (s Service) ImportDocument(ctx context.Context, src ImportSource) (Document
 		ext = s.importExtensionFromMime(src.MimeType)
 	}
 
+	// switch depending on extension (with MIME-based fallback) - if unsupported,
+	// we still keep the original file in the store for potential future use
 	switch ext {
 	case ".docx":
-		err = s.importDocx(ctx, doc, src, WordOptions{IncludeImages: s.importConfig().IncludeImages})
+		err = s.importDocx(ctx, doc, src, WordOptions{
+			IncludeImages: s.importConfig().IncludeImages,
+		})
 	case ".pptx":
 		err = s.importPptx(ctx, doc, src, PptxOptions{
 			IncludeImages: s.importConfig().IncludeImages,
 			IncludeSlides: s.importConfig().IncludeSlides,
 		})
-	case ".md", ".markdown":
+	case ".md", ".markdown", ".txt":
 		err = s.importMarkdownFile(ctx, doc, src)
 	case ".zip":
 		file, size, cleanup, stageErr := s.stageImportSource(ctx, src)
@@ -330,6 +336,7 @@ func (s Service) ExportZip(ctx context.Context, doc Document, w *zip.Writer) err
 			if err := markdownWriteZipEntry(w, name, body); err != nil {
 				return err
 			}
+
 		}
 	}
 	return nil
@@ -365,6 +372,8 @@ func (s Service) importExtensionFromMime(mimeType string) string {
 			return ".pptx"
 		case "text/markdown":
 			return ".md"
+		case "text/plain", "application/yaml", "text/yaml", "text/html":
+			return ".txt"
 		}
 	}
 	return ""
@@ -385,6 +394,10 @@ func (s Service) paths() Paths {
 	if strings.TrimSpace(paths.VersionsDir) == "" {
 		paths.VersionsDir = defaults.VersionsDir
 	}
+	if strings.TrimSpace(paths.OriginalDir) == "" {
+		paths.OriginalDir = defaults.OriginalDir
+	}
+
 	return paths
 }
 

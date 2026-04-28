@@ -10,10 +10,12 @@ import (
 )
 
 type importedDocument struct {
-	Root     []byte
-	Media    map[string][]byte
-	Slides   map[string][]byte
-	Versions map[string][]byte
+	Root         []byte
+	Original     []byte
+	OriginalName string
+	Media        map[string][]byte
+	Slides       map[string][]byte
+	Versions     map[string][]byte
 }
 
 func (s Service) importDocx(ctx context.Context, doc Document, src ImportSource, opt WordOptions) error {
@@ -27,6 +29,7 @@ func (s Service) importDocx(ctx context.Context, doc Document, src ImportSource,
 	if err != nil {
 		return err
 	}
+	converted.OriginalName = filepath.Base(file.Name())
 	return s.persistImportedDocument(ctx, doc, converted)
 }
 
@@ -41,6 +44,7 @@ func (s Service) importPptx(ctx context.Context, doc Document, src ImportSource,
 	if err != nil {
 		return err
 	}
+	converted.OriginalName = filepath.Base(file.Name())
 	return s.persistImportedDocument(ctx, doc, converted)
 }
 
@@ -55,6 +59,7 @@ func (s Service) importMarkdownFile(ctx context.Context, doc Document, src Impor
 	if err != nil {
 		return err
 	}
+	converted.OriginalName = filepath.Base(file.Name())
 	return s.persistImportedDocument(ctx, doc, converted)
 }
 
@@ -119,6 +124,10 @@ func (s Service) persistImportedDocument(ctx context.Context, doc Document, impo
 	}
 
 	if err := s.Store.WriteFile(ctx, doc.ID, s.paths().RootMarkdown, imported.Root, 0o644); err != nil {
+		return err
+	}
+
+	if err := s.Store.WriteFile(ctx, doc.ID, filepath.ToSlash(filepath.Join(s.paths().OriginalDir, imported.OriginalName)), imported.Original, 0o644); err != nil {
 		return err
 	}
 

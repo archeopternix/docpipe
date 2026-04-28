@@ -146,6 +146,8 @@ func SplitMarkdownToSearchSections(markdown string) []SearchSection {
 func normalizeNewlines(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
+	// normalize tabs to single spaces to avoid weird Markdown indentation
+	s = strings.ReplaceAll(s, "\t", " ")
 	return s
 }
 

@@ -88,5 +88,13 @@ func convertDocx(ctx context.Context, path string, src ImportSource, opt WordOpt
 
 	text := clean.Normalize(string(body), clean.Options{CleanTables: true})
 	imported.Root = []byte(mdComposeMarkdownWithMeta(meta, text))
+
+	// attach original file
+	orig, err := os.ReadFile(path) // path is a string
+	if err != nil {
+		return importedDocument{}, err
+	}
+	imported.Original = orig
+
 	return imported, nil
 }

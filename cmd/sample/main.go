@@ -1,7 +1,6 @@
 package main
 
 import (
-	"archive/zip"
 	"context"
 	"fmt"
 	"log"
@@ -48,20 +47,12 @@ func main() {
 	fm := docpipe.Frontmatter{Language: lang}
 	service.UpdateFrontmatter(context.Background(), doc, fm, docpipe.UpdateOptions{ArchivePrevious: true, BumpVersion: true})
 
-	outPath := filepath.Join(filepath.Dir(inputPath), doc.ID+".zip")
-	out, err := os.Create(outPath)
+	err = service.Clean(context.Background(), doc, docpipe.UpdateOptions{ArchivePrevious: true, BumpVersion: true})
 	if err != nil {
-		log.Fatalf("create zip %s: %v", outPath, err)
+		log.Fatalf("Cleaning %v", err)
 	}
-	defer out.Close()
 
-	zw := zip.NewWriter(out)
-	if err := service.ExportZip(context.Background(), doc, zw); err != nil {
-		log.Fatalf("export zip: %v", err)
-	}
-	if err := zw.Close(); err != nil {
-		log.Fatalf("close zip: %v", err)
-	}
+	outPath := filepath.Join(filepath.Dir(inputPath), doc.ID+".zip")
 
 	fmt.Printf("input: %s\n", inputPath)
 	fmt.Printf("document: %s\n", doc.ID)
@@ -69,7 +60,8 @@ func main() {
 }
 
 func defaultInputPath() string {
-	return filepath.Join("TestData", "strategy_IT_V1.3.docx")
-	// return filepath.Join("TestData", "real.pptx")
-	// return filepath.Join("TestData", "sample.md")
+	//return filepath.Join("TestData", "strategy_IT_V1.3.docx")
+	//return filepath.Join("TestData", "real.pptx")
+	//return filepath.Join("TestData", "sample.md")
+	return filepath.Join("TestData", "playbook.txt")
 }

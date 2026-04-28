@@ -116,6 +116,14 @@ func convertPptx(ctx context.Context, sourcePath string, src ImportSource, opt P
 		text = pptxAppendSlideLinks(text, imported.Slides)
 	}
 	imported.Root = []byte(mdComposeMarkdownWithMeta(meta, text))
+
+	// attach original file
+	orig, err := os.ReadFile(sourcePath) // path is a string
+	if err != nil {
+		return importedDocument{}, err
+	}
+	imported.Original = orig
+
 	return imported, nil
 }
 
