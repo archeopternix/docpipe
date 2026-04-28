@@ -684,6 +684,14 @@ func TestExternalToolHelpers(t *testing.T) {
 	}
 }
 
+func responseSnippet(raw []byte) string {
+	text := strings.TrimSpace(string(raw))
+	if len(text) <= defaultCommandErrorSnippetSize {
+		return text
+	}
+	return text[:defaultCommandErrorSnippetSize] + "..."
+}
+
 type fakeAIClient struct {
 	responses    []string
 	err          error

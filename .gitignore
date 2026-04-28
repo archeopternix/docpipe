@@ -4,3 +4,4 @@ cmd/
 prompts/
 .vscode/
 CODEX*.md
+analyzr_report.*

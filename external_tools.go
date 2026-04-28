@@ -68,11 +68,3 @@ func commandRunError(ctx context.Context, tool string, timeout time.Duration, er
 	}
 	return fmt.Errorf("%s failed: %w: %s", tool, err, message)
 }
-
-func responseSnippet(raw []byte) string {
-	text := strings.TrimSpace(string(raw))
-	if len(text) <= defaultCommandErrorSnippetSize {
-		return text
-	}
-	return text[:defaultCommandErrorSnippetSize] + "..."
-}
