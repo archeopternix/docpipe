@@ -183,7 +183,7 @@ func (s Service) WriteMarkdown(ctx context.Context, doc Document, root string, o
 
 // UpdateFrontmatter updates only the frontmatter fields provided in fm (missing fields keep current values).
 // Parameters: fm is merged into existing frontmatter; opt is passed through to WriteMarkdown.
-func (s Service) UpdateFrontmatter(ctx context.Context, doc Document, fm Frontmatter, opt UpdateOptions) error {
+func (s Service) WriteFrontmatter(ctx context.Context, doc Document, fm Frontmatter, opt UpdateOptions) error {
 	parts, err := s.ReadMarkdownParts(ctx, doc)
 	if err != nil {
 		return err

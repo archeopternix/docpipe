@@ -89,14 +89,3 @@ func (s Service) HeadingIndex(ctx context.Context, doc Document, maxLevel int) (
 	}
 	return index, nil
 }
-
-// SetFrontmatter overwrites the document frontmatter while preserving the current markdown body.
-// Parameters: fm becomes the new frontmatter; opt controls archiving/version bump behavior via WriteMarkdown.
-func (s Service) SetFrontmatter(ctx context.Context, doc Document, fm Frontmatter, opt UpdateOptions) error {
-	parts, err := s.ReadMarkdownParts(ctx, doc)
-	if err != nil {
-		return err
-	}
-
-	return s.WriteMarkdown(ctx, doc, mdComposeMarkdownWithMeta(fm, parts.Body), opt)
-}

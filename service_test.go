@@ -53,7 +53,7 @@ func TestServiceImportMarkdownUpdateAndExportZip(t *testing.T) {
 	fm := parts.Frontmatter
 
 	fm.Title = "Updated"
-	if err := service.UpdateFrontmatter(ctx, doc, fm, UpdateOptions{
+	if err := service.WriteFrontmatter(ctx, doc, fm, UpdateOptions{
 		ArchivePrevious: true,
 		BumpVersion:     true,
 		Now:             func() time.Time { return time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC) },
@@ -402,7 +402,7 @@ func TestServiceRenderAccessors(t *testing.T) {
 		t.Fatalf("GetMarkdownBody() = %q, want body without frontmatter", body)
 	}
 
-	if err := service.SetFrontmatter(ctx, doc, Frontmatter{Title: "Replacement", Version: "2.0", Language: "de"}, UpdateOptions{}); err != nil {
+	if err := service.WriteFrontmatter(ctx, doc, Frontmatter{Title: "Replacement", Version: "2.0", Language: "de"}, UpdateOptions{}); err != nil {
 		t.Fatalf("SetFrontmatter() error = %v", err)
 	}
 

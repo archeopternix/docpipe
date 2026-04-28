@@ -46,7 +46,7 @@ func main() {
 		log.Fatalf("language detection %v", err)
 	}
 	fm := docpipe.Frontmatter{Language: lang}
-	service.UpdateFrontmatter(context.Background(), doc, fm, docpipe.UpdateOptions{ArchivePrevious: true, BumpVersion: true})
+	service.WriteFrontmatter(context.Background(), doc, fm, docpipe.UpdateOptions{ArchivePrevious: true, BumpVersion: true})
 
 	err = service.Clean(context.Background(), doc, docpipe.UpdateOptions{ArchivePrevious: true, BumpVersion: true})
 	if err != nil {
